@@ -10,6 +10,7 @@ const GalleryEdit = () => {
 
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -64,41 +65,90 @@ const GalleryEdit = () => {
     }
   };
 
+  const [uploadStats, setUploadStats] = useState({
+    currentFileIndex: 0,
+    totalFiles: 0,
+    totalBytes: 0,
+    uploadedBytes: 0,
+    currentFileLoaded: 0
+  });
+
+  const formatMB = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
 
-    // Optional client side size check (let's say warn if over 20MB)
-    // const largeFiles = files.filter(f => f.size > 20 * 1024 * 1024);
-    // if (largeFiles.length > 0) {
-    //   if (!window.confirm('Some files are very large (>20MB) and may take a while to upload. Continue?')) {
-    //     e.target.value = '';
-    //     return;
-    //   }
-    // }
-
     setIsUploading(true);
+    const totalBytes = files.reduce((acc, file) => acc + file.size, 0);
+    setUploadStats({
+      currentFileIndex: 0,
+      totalFiles: files.length,
+      totalBytes,
+      uploadedBytes: 0,
+      currentFileLoaded: 0
+    });
     setError('');
 
-    const formData = new FormData();
-    files.forEach(file => formData.append('images', file));
+    const uploadedImagesList = [];
+    let hasError = false;
 
-    try {
-      const res = await fetch(`/api/galleries/${galleryId}/images`, {
-        method: 'POST',
-        body: formData, // fetch automatically sets multipart/form-data boundary
-      });
+    for (let i = 0; i < files.length; i++) {
+      const formData = new FormData();
+      formData.append('images', files[i]);
 
-      const uploadedImages = await res.json();
-      if (!res.ok) throw new Error(uploadedImages.error || 'Upload failed');
+      try {
+        const uploadedImages = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `/api/galleries/${galleryId}/images`);
 
-      // Add new images to state
-      setImages(prev => [...uploadedImages, ...prev]);
-    } catch (err) {
-      setError(`Upload failed: ${err.message}`);
-    } finally {
-      setIsUploading(false);
-      e.target.value = ''; // Reset input
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              setUploadStats(prev => ({ ...prev, currentFileLoaded: event.loaded }));
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(JSON.parse(xhr.responseText));
+            } else {
+              try {
+                const err = JSON.parse(xhr.responseText);
+                reject(new Error(err.error || 'Upload failed'));
+              } catch {
+                reject(new Error('Upload failed'));
+              }
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send(formData);
+        });
+
+        uploadedImagesList.push(...uploadedImages);
+        setUploadStats(prev => ({
+          ...prev,
+          currentFileIndex: prev.currentFileIndex + 1,
+          uploadedBytes: prev.uploadedBytes + files[i].size,
+          currentFileLoaded: 0
+        }));
+      } catch (err) {
+        hasError = true;
+        setError(`Failed to upload ${files[i].name}: ${err.message}`);
+        break; // Stop uploading further files if one fails, or remove this to continue
+      }
+    }
+
+    if (uploadedImagesList.length > 0) {
+      setImages(prev => [...uploadedImagesList, ...prev]);
+    }
+
+    setIsUploading(false);
+    e.target.value = ''; // Reset input
+
+    if (!hasError) {
+      setSuccess('All images uploaded successfully!');
+      setTimeout(() => setSuccess(''), 3000);
     }
   };
 
@@ -217,6 +267,37 @@ const GalleryEdit = () => {
                   </button>
                 </div>
               </div>
+
+              {isUploading && (
+                (() => {
+                  const totalUploaded = uploadStats.uploadedBytes + uploadStats.currentFileLoaded;
+                  const progressPercent = uploadStats.totalBytes > 0
+                    ? Math.min(100, Math.round((totalUploaded / uploadStats.totalBytes) * 100))
+                    : 0;
+
+                  const isProcessing = progressPercent === 100 && uploadStats.currentFileIndex < uploadStats.totalFiles;
+
+                  return (
+                    <div className="mb-6">
+                      <div className="flex justify-between text-sm font-medium text-gray-700 mb-2">
+                        <span>
+                          {isProcessing
+                            ? 'Processing images on server (this may take a moment)...'
+                            : `Uploading ${uploadStats.currentFileIndex + 1} of ${uploadStats.totalFiles} (${formatMB(totalUploaded)}MB / ${formatMB(uploadStats.totalBytes)}MB)`
+                          }
+                        </span>
+                        <span>{progressPercent}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`bg-indigo-600 h-2 rounded-full transition-all duration-300 ${isProcessing ? 'animate-pulse' : 'progress-bar-animated'}`}
+                          style={{ width: `${progressPercent}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
 
               {/* Image Grid */}
               {images.length === 0 ? (
