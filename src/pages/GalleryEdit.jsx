@@ -13,6 +13,7 @@ const GalleryEdit = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [selectedImageIds, setSelectedImageIds] = useState(new Set());
 
   useEffect(() => {
     fetchGalleryData();
@@ -86,7 +87,8 @@ const GalleryEdit = () => {
       totalFiles: files.length,
       totalBytes,
       uploadedBytes: 0,
-      currentFileLoaded: 0
+      currentFileLoaded: 0,
+      isWaitingForBackend: false
     });
     setError('');
 
@@ -104,7 +106,11 @@ const GalleryEdit = () => {
 
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
-              setUploadStats(prev => ({ ...prev, currentFileLoaded: event.loaded }));
+              setUploadStats(prev => ({ 
+                ...prev, 
+                currentFileLoaded: event.loaded,
+                isWaitingForBackend: event.loaded === event.total
+              }));
             }
           };
 
@@ -130,7 +136,8 @@ const GalleryEdit = () => {
           ...prev,
           currentFileIndex: prev.currentFileIndex + 1,
           uploadedBytes: prev.uploadedBytes + files[i].size,
-          currentFileLoaded: 0
+          currentFileLoaded: 0,
+          isWaitingForBackend: false
         }));
       } catch (err) {
         hasError = true;
@@ -162,8 +169,53 @@ const GalleryEdit = () => {
       if (!res.ok) throw new Error('Failed to delete image');
 
       setImages(prev => prev.filter(img => img.id !== imageId));
+      setSelectedImageIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(imageId);
+        return newSet;
+      });
     } catch (err) {
       alert(`Delete failed: ${err.message}`);
+    }
+  };
+
+  const toggleSelection = (imageId) => {
+    setSelectedImageIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(imageId)) newSet.delete(imageId);
+      else newSet.add(imageId);
+      return newSet;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedImageIds.size === 0) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedImageIds.size} images?`)) return;
+
+    let successCount = 0;
+    let failCount = 0;
+    const idsToDelete = Array.from(selectedImageIds);
+
+    for (const id of idsToDelete) {
+      try {
+        const res = await fetch(`/api/images/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          setImages(prev => prev.filter(img => img.id !== id));
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (err) {
+        failCount++;
+      }
+    }
+
+    setSelectedImageIds(new Set());
+    if (failCount > 0) {
+      setError(`Failed to delete ${failCount} images. (Deleted ${successCount})`);
+    } else {
+      setSuccess(`Successfully deleted ${successCount} images.`);
+      setTimeout(() => setSuccess(''), 3000);
     }
   };
 
@@ -243,8 +295,17 @@ const GalleryEdit = () => {
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-lg font-bold text-gray-900">Manage Images</h2>
-                <div className="relative">
-                  <input
+                <div className="flex items-center space-x-3">
+                  {selectedImageIds.size > 0 && (
+                    <button
+                      onClick={handleBulkDelete}
+                      className="px-3 py-2 border border-red-300 text-red-700 bg-red-50 hover:bg-red-100 rounded-md shadow-sm text-sm font-medium transition-colors"
+                    >
+                      Delete Selected ({selectedImageIds.size})
+                    </button>
+                  )}
+                  <div className="relative">
+                    <input
                     type="file"
                     multiple
                     accept="image/jpeg, image/png, image/webp"
@@ -267,23 +328,29 @@ const GalleryEdit = () => {
                   </button>
                 </div>
               </div>
+            </div>
 
               {isUploading && (
                 (() => {
-                  const totalUploaded = uploadStats.uploadedBytes + uploadStats.currentFileLoaded;
+                  // Calculate progress where each file is 50% uploading, 50% server processing
+                  const completedFilesWeight = uploadStats.uploadedBytes;
+                  const currentFileWeight = uploadStats.currentFileLoaded * 0.5;
+                  const totalWeight = completedFilesWeight + currentFileWeight;
+                  
                   const progressPercent = uploadStats.totalBytes > 0
-                    ? Math.min(100, Math.round((totalUploaded / uploadStats.totalBytes) * 100))
+                    ? Math.min(100, Math.round((totalWeight / uploadStats.totalBytes) * 100))
                     : 0;
 
-                  const isProcessing = progressPercent === 100 && uploadStats.currentFileIndex < uploadStats.totalFiles;
+                  const literalTotalUploaded = uploadStats.uploadedBytes + uploadStats.currentFileLoaded;
+                  const isProcessing = uploadStats.isWaitingForBackend;
 
                   return (
                     <div className="mb-6">
                       <div className="flex justify-between text-sm font-medium text-gray-700 mb-2">
                         <span>
                           {isProcessing
-                            ? 'Processing images on server (this may take a moment)...'
-                            : `Uploading ${uploadStats.currentFileIndex + 1} of ${uploadStats.totalFiles} (${formatMB(totalUploaded)}MB / ${formatMB(uploadStats.totalBytes)}MB)`
+                            ? `Processing image ${uploadStats.currentFileIndex + 1} on server...`
+                            : `Uploading ${uploadStats.currentFileIndex + 1} of ${uploadStats.totalFiles} (${formatMB(literalTotalUploaded)}MB / ${formatMB(uploadStats.totalBytes)}MB)`
                           }
                         </span>
                         <span>{progressPercent}%</span>
@@ -307,17 +374,34 @@ const GalleryEdit = () => {
               ) : (
                 <div className="columns-2 sm:columns-3 lg:columns-4 gap-4 space-y-4">
                   {images.map(image => (
-                    <div key={image.id} className="relative group bg-gray-100 overflow-hidden border border-gray-200 break-inside-avoid">
+                    <div 
+                      key={image.id} 
+                      className={`relative group bg-gray-100 overflow-hidden border break-inside-avoid cursor-pointer transition-all ${selectedImageIds.has(image.id) ? 'border-indigo-500 ring-2 ring-indigo-500' : 'border-gray-200 hover:border-gray-300'}`}
+                      onClick={() => toggleSelection(image.id)}
+                    >
                       <img
                         src={image.preview_url || image.image_url}
                         alt="Gallery upload"
-                        className="w-full h-auto"
+                        className={`w-full h-auto transition-transform duration-200 ${selectedImageIds.has(image.id) ? 'scale-95' : 'group-hover:scale-[1.02]'}`}
                         loading="lazy"
                       />
-                      <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                      
+                      {/* Checkbox Overlay */}
+                      <div className={`absolute top-2 left-2 z-10 transition-opacity duration-200 ${selectedImageIds.has(image.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${selectedImageIds.has(image.id) ? 'bg-indigo-600 border-indigo-600' : 'bg-white/80 border-gray-400 backdrop-blur-sm'}`}>
+                          {selectedImageIds.has(image.id) && (
+                            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Single Delete Button Overlay */}
+                      <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all flex items-center justify-center">
                         <button
-                          onClick={() => handleDeleteImage(image.id)}
-                          className="bg-red-600 text-white p-2 rounded-full hover:bg-red-700 shadow-sm"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteImage(image.id); }}
+                          className="opacity-0 group-hover:opacity-100 bg-red-600/90 backdrop-blur-sm text-white p-2 rounded-full hover:bg-red-700 shadow-sm transition-opacity duration-200 hover:scale-110"
                           title="Delete Image"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

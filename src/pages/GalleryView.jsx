@@ -2,14 +2,20 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import PhotoAlbum from 'react-photo-album';
+import 'react-photo-album/styles.css';
+import Lightbox from "yet-another-react-lightbox";
+import "yet-another-react-lightbox/styles.css";
 
 const GalleryView = () => {
   const { galleryId } = useParams();
   const [gallery, setGallery] = useState(null);
   const [images, setImages] = useState([]);
+  const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(-1);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -25,7 +31,35 @@ const GalleryView = () => {
 
         if (!imagesRes.ok) throw new Error('Failed to load images');
         const imagesData = await imagesRes.json();
+
+        // Process images to get dimensions for react-photo-album
+        const processedPhotos = await Promise.all((imagesData || []).map(img => {
+          return new Promise((resolve) => {
+            const image = new Image();
+            image.src = img.preview_url || img.image_url;
+            image.onload = () => {
+              resolve({
+                src: image.src,
+                width: image.width,
+                height: image.height,
+                key: img.id,
+                original_url: img.image_url
+              });
+            };
+            image.onerror = () => {
+              resolve({
+                src: image.src,
+                width: 1, // Fallback
+                height: 1,
+                key: img.id,
+                original_url: img.image_url
+              });
+            };
+          });
+        }));
+
         setImages(imagesData || []);
+        setPhotos(processedPhotos);
       } catch (err) {
         console.error('Error fetching gallery:', err);
         setError(err.message);
@@ -39,10 +73,10 @@ const GalleryView = () => {
   const handleDownloadAll = async () => {
     if (images.length === 0) return;
     setIsDownloading(true);
-    
+
     try {
       const zip = new JSZip();
-      
+
       // Fetch all image blobs concurrently
       const fetchPromises = images.map(async (image, index) => {
         const url = image.image_url;
@@ -50,12 +84,12 @@ const GalleryView = () => {
           const response = await fetch(url);
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const blob = await response.blob();
-          
+
           // Generate a clean filename: GalleryTitle_001.jpg
           const safeTitle = (gallery?.title || 'Gallery').replace(/[^a-z0-9]/gi, '_').toLowerCase();
           const extension = url.split('.').pop().split('?')[0] || 'jpg';
           const filename = `${safeTitle}_${String(index + 1).padStart(3, '0')}.${extension}`;
-          
+
           zip.file(filename, blob);
         } catch (err) {
           console.error(`Failed to fetch image ${url}`, err);
@@ -66,7 +100,7 @@ const GalleryView = () => {
 
       // Generate the zip file
       const content = await zip.generateAsync({ type: 'blob' });
-      
+
       // Trigger download
       const safeTitle = (gallery?.title || 'Gallery').replace(/[^a-z0-9]/gi, '_').toLowerCase();
       saveAs(content, `${safeTitle}_photos.zip`);
@@ -108,7 +142,7 @@ const GalleryView = () => {
             Photography by {gallery?.photographer_name}
           </p>
           <div className="mt-8 sm:absolute sm:right-0 sm:top-1/2 sm:-translate-y-1/2 sm:mt-0">
-            <button 
+            <button
               onClick={handleDownloadAll}
               disabled={isDownloading || images.length === 0}
               className="inline-flex items-center px-6 py-3 bg-gray-900 text-white text-sm font-semibold shadow-sm hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -135,23 +169,30 @@ const GalleryView = () => {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 sm:p-8 mt-4">
-        {images.length === 0 ? (
+        {photos.length === 0 ? (
           <p className="text-gray-500 italic text-center mt-12">No images in this gallery yet.</p>
         ) : (
-          <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
-            {images.map(image => (
-              <div key={image.id} className="relative overflow-hidden break-inside-avoid shadow-sm hover:shadow-md transition-shadow">
-                {/* Wrap the image in an anchor tag so clicking it opens the full original version */}
-                <a href={image.image_url} target="_blank" rel="noopener noreferrer">
-                  <img
-                    src={image.preview_url || image.image_url}
-                    alt="Gallery image"
-                    className="w-full h-auto hover:opacity-95 transition-opacity"
-                    loading="lazy"
-                  />
-                </a>
-              </div>
-            ))}
+          <div className="photo-album-container">
+            <PhotoAlbum
+              layout="rows"
+              photos={photos}
+              targetRowHeight={300}
+              onClick={({ index }) => setLightboxIndex(index)}
+            />
+
+            <Lightbox
+              slides={photos.map(p => ({ src: p.src, width: p.width, height: p.height }))}
+              open={lightboxIndex >= 0}
+              index={lightboxIndex}
+              close={() => setLightboxIndex(-1)}
+              styles={{
+                root: {
+                  "--yarl__color_backdrop": "rgba(255, 255, 255, 0.98)",
+                  "--yarl__color_button": "#bcbdbfff",
+                  "--yarl__color_button_active": "#d3d4d6ff",
+                }
+              }}
+            />
           </div>
         )}
       </main>

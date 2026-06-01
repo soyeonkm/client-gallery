@@ -1,10 +1,14 @@
 import express from 'express';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 import cookieParser from 'cookie-parser';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 import { fileTypeFromBuffer } from 'file-type';
 import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
+import s3Client from './r2Config.js';
+import { PutObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 
 const app = express();
 const port = 3000;
@@ -205,7 +209,12 @@ app.get('/api/galleries/:id/images', async (req, res) => {
 
 app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), async (req, res) => {
   const files = req.files;
-  if (!files || files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+  console.log(`\n[UPLOAD DEBUG] Received upload request for gallery: ${req.params.id}`);
+  if (!files || files.length === 0) {
+    console.log(`[UPLOAD DEBUG] No files were uploaded.`);
+    return res.status(400).json({ error: 'No files uploaded' });
+  }
+  console.log(`[UPLOAD DEBUG] Number of files to process: ${files.length}`);
 
   const supabase = getSupabaseClient(req);
 
@@ -224,10 +233,14 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
 
   for (const file of files) {
     try {
+      console.log(`\n[UPLOAD DEBUG] --- Processing file: ${file.originalname || 'unknown_name'} (${file.size} bytes) ---`);
+      
       // Validate Magic Bytes
       const fileType = await fileTypeFromBuffer(file.buffer);
+      console.log(`[UPLOAD DEBUG] Detected file type: ${fileType ? fileType.mime : 'unknown'}`);
+      
       if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
-        console.warn(`Rejected file with mime: ${fileType?.mime}`);
+        console.warn(`[UPLOAD DEBUG] Rejected file with mime: ${fileType?.mime}`);
         continue; // Skip invalid files
       }
 
@@ -237,34 +250,49 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
       const previewPath = `${req.params.id}/${fileId}_preview.${ext}`;
 
       // Upload original
-      const { error: uploadError } = await supabase.storage
-        .from('galleries')
-        .upload(originalPath, file.buffer, {
-          contentType: fileType.mime,
-        });
+      console.log(`[UPLOAD DEBUG] Uploading ORIGINAL to Cloudflare R2 bucket: ${process.env.R2_BUCKET_NAME}, path: ${originalPath}`);
+      await s3Client.send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: originalPath,
+        Body: file.buffer,
+        ContentType: fileType.mime,
+      }));
+      console.log(`[UPLOAD DEBUG] Successfully uploaded ORIGINAL to R2.`);
 
-      if (uploadError) throw uploadError;
+      // Generate and upload preview using sharp, ensuring it's under 1MB
+      console.log(`[UPLOAD DEBUG] Starting image compression for preview...`);
+      let previewBuffer = await sharp(file.buffer).rotate().toBuffer();
+      let quality = 100;
+      
+      while (previewBuffer.length > 1024 * 1024 && quality >= 20) {
+        quality -= 10;
+        console.log(`[UPLOAD DEBUG] Preview > 1MB, dropping quality to ${quality}...`);
+        previewBuffer = await sharp(file.buffer)
+          .rotate()
+          .jpeg({ quality: quality })
+          .toBuffer();
+      }
+      console.log(`[UPLOAD DEBUG] Compression complete. Final preview size: ${previewBuffer.length} bytes at quality ${quality}`);
 
-      // Generate and upload preview using sharp
-      const previewBuffer = await sharp(file.buffer)
-        .rotate() // Auto-orient based on EXIF data before stripping metadata
-        .resize({ width: 800, withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toBuffer();
+      console.log(`[UPLOAD DEBUG] Uploading PREVIEW to Cloudflare R2: ${previewPath}`);
+      await s3Client.send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: previewPath,
+        Body: previewBuffer,
+        ContentType: 'image/jpeg',
+      }));
+      console.log(`[UPLOAD DEBUG] Successfully uploaded PREVIEW to R2.`);
 
-      const { error: previewUploadError } = await supabase.storage
-        .from('galleries')
-        .upload(previewPath, previewBuffer, {
-          contentType: 'image/jpeg',
-        });
-
-      if (previewUploadError) throw previewUploadError;
-
-      // Get public URLs
-      const { data: { publicUrl: imageUrl } } = supabase.storage.from('galleries').getPublicUrl(originalPath);
-      const { data: { publicUrl: previewUrl } } = supabase.storage.from('galleries').getPublicUrl(previewPath);
+      // Get public URLs using the configured R2 public dev domain
+      let baseUrl = process.env.R2_PUBLIC_URL.replace(/[\s\n\r]/g, '').replace(/\/$/, '');
+      if (!baseUrl.startsWith('http')) {
+        baseUrl = `https://${baseUrl}`;
+      }
+      const imageUrl = `${baseUrl}/${originalPath}`;
+      const previewUrl = `${baseUrl}/${previewPath}`;
 
       // Insert DB record
+      console.log(`[UPLOAD DEBUG] Saving to database: Image URL=${imageUrl}`);
       const { data: insertedImage, error: dbError } = await supabase
         .from('images')
         .insert([{
@@ -275,11 +303,16 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
         .select()
         .single();
 
-      if (dbError) throw dbError;
+      if (dbError) {
+        console.error(`[UPLOAD DEBUG ERROR] Database insertion failed:`, dbError);
+        throw dbError;
+      }
+      
+      console.log(`[UPLOAD DEBUG] Successfully saved image to database with ID: ${insertedImage.id}`);
       uploadedImages.push(insertedImage);
 
     } catch (err) {
-      console.error('Error processing file:', err);
+      console.error('[UPLOAD DEBUG ERROR] Error processing file:', err);
       // Continue to next file on individual failure
     }
   }
@@ -306,19 +339,42 @@ app.delete('/api/images/:id', requireAuth, async (req, res) => {
   }
 
   // Delete from storage
-  // Extract paths from URLs (assuming standard format: .../storage/v1/object/public/galleries/path)
-  const getPathFromUrl = (url) => {
-    if (!url) return null;
-    const parts = url.split('/galleries/');
-    return parts.length > 1 ? parts[1] : null;
-  };
+  const originalUrl = image.image_url;
+  const previewUrl = image.preview_url;
 
-  const originalPath = getPathFromUrl(image.image_url);
-  const previewPath = getPathFromUrl(image.preview_url);
+  if (originalUrl && originalUrl.includes('supabase.co')) {
+    // Fallback for deleting existing images stored in Supabase
+    const getPathFromSupabaseUrl = (url) => {
+      if (!url) return null;
+      const parts = url.split('/galleries/');
+      return parts.length > 1 ? parts[1] : null;
+    };
+    const pathsToDelete = [getPathFromSupabaseUrl(originalUrl), getPathFromSupabaseUrl(previewUrl)].filter(Boolean);
+    if (pathsToDelete.length > 0) {
+      supabase.storage.from('galleries').remove(pathsToDelete);
+    }
+  } else {
+    // Delete from Cloudflare R2
+    const getPathFromUrl = (url) => {
+      if (!url) return null;
+      try {
+        return new URL(url).pathname.substring(1); // Remove leading slash for S3 Key
+      } catch (err) {
+        return null;
+      }
+    };
 
-  const pathsToDelete = [originalPath, previewPath].filter(Boolean);
+    const objectsToDelete = [getPathFromUrl(originalUrl), getPathFromUrl(previewUrl)]
+      .filter(Boolean)
+      .map(Key => ({ Key }));
 
-  supabase.storage.from('galleries').remove(pathsToDelete);
+    if (objectsToDelete.length > 0) {
+      await s3Client.send(new DeleteObjectsCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Delete: { Objects: objectsToDelete }
+      }));
+    }
+  }
 
   // Delete from DB
   const { error: deleteError } = await supabase

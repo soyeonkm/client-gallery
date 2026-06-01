@@ -25,3 +25,11 @@
   background-size: 1rem 1rem;
   animation: progress-stripes 1s linear infinite;
 }
+
+/* Remove default drop-shadows from lightbox buttons */
+.yarl__icon {
+  filter: none !important;
+}
+.yarl__button {
+  filter: none !important;
+}
