@@ -106,6 +106,22 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ user: data.user });
 });
 
+app.post('/api/auth/update-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Missing token or password.' });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false },
+  });
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
 app.post('/api/auth/logout', async (req, res) => {
   const supabase = getSupabaseClient(req);
   await supabase.auth.signOut();
@@ -234,11 +250,11 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
   for (const file of files) {
     try {
       console.log(`\n[UPLOAD DEBUG] --- Processing file: ${file.originalname || 'unknown_name'} (${file.size} bytes) ---`);
-      
+
       // Validate Magic Bytes
       const fileType = await fileTypeFromBuffer(file.buffer);
       console.log(`[UPLOAD DEBUG] Detected file type: ${fileType ? fileType.mime : 'unknown'}`);
-      
+
       if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
         console.warn(`[UPLOAD DEBUG] Rejected file with mime: ${fileType?.mime}`);
         continue; // Skip invalid files
@@ -263,7 +279,7 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
       console.log(`[UPLOAD DEBUG] Starting image compression for preview...`);
       let previewBuffer = await sharp(file.buffer).rotate().toBuffer();
       let quality = 100;
-      
+
       while (previewBuffer.length > 1024 * 1024 && quality >= 20) {
         quality -= 10;
         console.log(`[UPLOAD DEBUG] Preview > 1MB, dropping quality to ${quality}...`);
@@ -307,7 +323,7 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
         console.error(`[UPLOAD DEBUG ERROR] Database insertion failed:`, dbError);
         throw dbError;
       }
-      
+
       console.log(`[UPLOAD DEBUG] Successfully saved image to database with ID: ${insertedImage.id}`);
       uploadedImages.push(insertedImage);
 

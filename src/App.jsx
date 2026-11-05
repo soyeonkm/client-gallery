@@ -6,6 +6,7 @@ import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import GalleryEdit from './pages/GalleryEdit';
 import GalleryView from './pages/GalleryView';
+import ResetPassword from './pages/ResetPassword';
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
           {/* Public Routes */}
           <Route path="/" element={<Landing />} />
           <Route path="/view/:galleryId" element={<GalleryView />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Protected Routes */}
           <Route element={<ProtectedRoute />}>

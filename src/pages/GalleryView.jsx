@@ -16,6 +16,7 @@ const GalleryView = () => {
   const [error, setError] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(-1);
+  const [isSingleDownloading, setIsSingleDownloading] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -69,6 +70,24 @@ const GalleryView = () => {
     };
     fetchData();
   }, [galleryId]);
+
+  const handleDownloadSingle = async () => {
+    const photo = photos[lightboxIndex];
+    if (!photo) return;
+    setIsSingleDownloading(true);
+    try {
+      const url = photo.original_url || photo.src;
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const safeTitle = (gallery?.title || 'photo').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const ext = url.split('.').pop().split('?')[0] || 'jpg';
+      saveAs(blob, `${safeTitle}_${String(lightboxIndex + 1).padStart(3, '0')}.${ext}`);
+    } catch (err) {
+      console.error('Single image download failed:', err);
+    } finally {
+      setIsSingleDownloading(false);
+    }
+  };
 
   const handleDownloadAll = async () => {
     if (images.length === 0) return;
@@ -185,6 +204,26 @@ const GalleryView = () => {
               open={lightboxIndex >= 0}
               index={lightboxIndex}
               close={() => setLightboxIndex(-1)}
+              toolbar={{
+                buttons: [
+                  <button
+                    key="download"
+                    type="button"
+                    title="Download photo"
+                    disabled={isSingleDownloading}
+                    onClick={handleDownloadSingle}
+                    className="yarl__button"
+                    style={{ opacity: isSingleDownloading ? 0.5 : 1 }}
+                  >
+                    {isSingleDownloading ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    )}
+                  </button>,
+                  "close"
+                ]
+              }}
               styles={{
                 root: {
                   "--yarl__color_backdrop": "rgba(255, 255, 255, 0.98)",
