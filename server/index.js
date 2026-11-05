@@ -285,12 +285,9 @@ app.get('/api/galleries/:id/images', async (req, res) => {
 
 app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), async (req, res) => {
   const files = req.files;
-  console.log(`\n[UPLOAD DEBUG] Received upload request for gallery: ${req.params.id}`);
   if (!files || files.length === 0) {
-    console.log(`[UPLOAD DEBUG] No files were uploaded.`);
     return res.status(400).json({ error: 'No files uploaded' });
   }
-  console.log(`[UPLOAD DEBUG] Number of files to process: ${files.length}`);
 
   const supabase = getSupabaseClient(req);
 
@@ -309,14 +306,11 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
 
   for (const file of files) {
     try {
-      console.log(`\n[UPLOAD DEBUG] --- Processing file: ${file.originalname || 'unknown_name'} (${file.size} bytes) ---`);
-
       // Validate Magic Bytes
       const fileType = await fileTypeFromBuffer(file.buffer);
-      console.log(`[UPLOAD DEBUG] Detected file type: ${fileType ? fileType.mime : 'unknown'}`);
 
       if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
-        console.warn(`[UPLOAD DEBUG] Rejected file with mime: ${fileType?.mime}`);
+        console.warn(`Upload rejected: unsupported type ${fileType?.mime || 'unknown'}`);
         continue; // Skip invalid files
       }
 
@@ -326,38 +320,31 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
       const previewPath = `${req.params.id}/${fileId}_preview.${ext}`;
 
       // Upload original
-      console.log(`[UPLOAD DEBUG] Uploading ORIGINAL to Cloudflare R2 bucket: ${process.env.R2_BUCKET_NAME}, path: ${originalPath}`);
       await s3Client.send(new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME,
         Key: originalPath,
         Body: file.buffer,
         ContentType: fileType.mime,
       }));
-      console.log(`[UPLOAD DEBUG] Successfully uploaded ORIGINAL to R2.`);
 
       // Generate and upload preview using sharp, ensuring it's under 1MB
-      console.log(`[UPLOAD DEBUG] Starting image compression for preview...`);
       let previewBuffer = await sharp(file.buffer).rotate().toBuffer();
       let quality = 100;
 
       while (previewBuffer.length > 1024 * 1024 && quality >= 20) {
         quality -= 10;
-        console.log(`[UPLOAD DEBUG] Preview > 1MB, dropping quality to ${quality}...`);
         previewBuffer = await sharp(file.buffer)
           .rotate()
           .jpeg({ quality: quality })
           .toBuffer();
       }
-      console.log(`[UPLOAD DEBUG] Compression complete. Final preview size: ${previewBuffer.length} bytes at quality ${quality}`);
 
-      console.log(`[UPLOAD DEBUG] Uploading PREVIEW to Cloudflare R2: ${previewPath}`);
       await s3Client.send(new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME,
         Key: previewPath,
         Body: previewBuffer,
         ContentType: 'image/jpeg',
       }));
-      console.log(`[UPLOAD DEBUG] Successfully uploaded PREVIEW to R2.`);
 
       // Get public URLs using the configured R2 public dev domain
       let baseUrl = process.env.R2_PUBLIC_URL.replace(/[\s\n\r]/g, '').replace(/\/$/, '');
@@ -368,7 +355,6 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
       const previewUrl = `${baseUrl}/${previewPath}`;
 
       // Insert DB record
-      console.log(`[UPLOAD DEBUG] Saving to database: Image URL=${imageUrl}`);
       const { data: insertedImage, error: dbError } = await supabase
         .from('images')
         .insert([{
@@ -380,15 +366,13 @@ app.post('/api/galleries/:id/images', requireAuth, upload.array('images', 20), a
         .single();
 
       if (dbError) {
-        console.error(`[UPLOAD DEBUG ERROR] Database insertion failed:`, dbError);
         throw dbError;
       }
 
-      console.log(`[UPLOAD DEBUG] Successfully saved image to database with ID: ${insertedImage.id}`);
       uploadedImages.push(insertedImage);
 
     } catch (err) {
-      console.error('[UPLOAD DEBUG ERROR] Error processing file:', err);
+      console.error('Upload failed:', err);
       // Continue to next file on individual failure
     }
   }
