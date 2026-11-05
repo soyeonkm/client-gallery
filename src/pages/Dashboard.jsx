@@ -51,6 +51,19 @@ const Dashboard = () => {
     }
   };
 
+  const handleDeleteGallery = async (gallery) => {
+    if (!window.confirm(`Delete "${gallery.title}" and all its photos? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/galleries/${gallery.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setGalleries((prev) => prev.filter((g) => g.id !== gallery.id));
+    } catch (err) {
+      console.error('Error deleting gallery:', err);
+      alert(`Failed to delete gallery: ${err.message}`);
+    }
+  };
+
   const copyToClipboard = async (galleryId) => {
     const url = `${window.location.origin}/view/${galleryId}`;
     try {
@@ -132,6 +145,12 @@ const Dashboard = () => {
                   >
                     Edit Settings
                   </Link>
+                  <button
+                    onClick={() => handleDeleteGallery(gallery)}
+                    className="text-sm font-medium text-red-600 hover:text-red-800"
+                  >
+                    Delete
+                  </button>
                   <button
                     onClick={() => copyToClipboard(gallery.id)}
                     className="text-sm font-medium text-gray-600 hover:text-gray-900 flex items-center"

@@ -8,7 +8,7 @@ import { fileTypeFromBuffer } from 'file-type';
 import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import s3Client from './r2Config.js';
-import { PutObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 const app = express();
 const port = 3000;
@@ -216,6 +216,57 @@ app.put('/api/galleries/:id', requireAuth, async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
   res.json(data[0]);
+});
+
+app.delete('/api/galleries/:id', requireAuth, async (req, res) => {
+  const supabase = getSupabaseClient(req);
+  const galleryId = req.params.id;
+
+  const { data: gallery, error: fetchError } = await supabase
+    .from('galleries')
+    .select('owner_id')
+    .eq('id', galleryId)
+    .single();
+
+  if (fetchError || gallery.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  // DB first: if R2 cleanup fails afterwards we only leave invisible orphans, never a broken gallery
+  const { error: imagesError } = await supabase.from('images').delete().eq('gallery_id', galleryId);
+  if (imagesError) return res.status(500).json({ error: imagesError.message });
+
+  const { data: deleted, error: galleryError } = await supabase
+    .from('galleries')
+    .delete()
+    .eq('id', galleryId)
+    .select('id');
+  if (galleryError) return res.status(500).json({ error: galleryError.message });
+  // RLS silently deletes 0 rows if there's no delete policy
+  if (!deleted?.length) return res.status(500).json({ error: 'Gallery could not be deleted (check RLS delete policy).' });
+
+  // Remove every object under the gallery prefix, 1000 per page (S3 limit for both calls)
+  try {
+    let ContinuationToken;
+    do {
+      const page = await s3Client.send(new ListObjectsV2Command({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Prefix: `${galleryId}/`,
+        ContinuationToken,
+      }));
+      if (page.Contents?.length) {
+        await s3Client.send(new DeleteObjectsCommand({
+          Bucket: process.env.R2_BUCKET_NAME,
+          Delete: { Objects: page.Contents.map(({ Key }) => ({ Key })) },
+        }));
+      }
+      ContinuationToken = page.NextContinuationToken;
+    } while (ContinuationToken);
+  } catch (err) {
+    console.error(`R2 cleanup failed for gallery ${galleryId}:`, err);
+  }
+
+  res.json({ success: true });
 });
 
 // Images Routes
