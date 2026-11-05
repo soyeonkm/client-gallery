@@ -76,6 +76,15 @@ const requireAuth = async (req, res, next) => {
 };
 
 // Configure Multer for file uploads (Memory Storage, 50MB limit to prevent DoS)
+// R2 object key from its public URL (pathname minus leading slash)
+const r2KeyFromUrl = (url) => {
+  try {
+    return new URL(url).pathname.substring(1);
+  } catch {
+    return null;
+  }
+};
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
@@ -354,42 +363,16 @@ app.delete('/api/images/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  // Delete from storage
-  const originalUrl = image.image_url;
-  const previewUrl = image.preview_url;
+  // Delete from R2
+  const objectsToDelete = [r2KeyFromUrl(image.image_url), r2KeyFromUrl(image.preview_url)]
+    .filter(Boolean)
+    .map(Key => ({ Key }));
 
-  if (originalUrl && originalUrl.includes('supabase.co')) {
-    // Fallback for deleting existing images stored in Supabase
-    const getPathFromSupabaseUrl = (url) => {
-      if (!url) return null;
-      const parts = url.split('/galleries/');
-      return parts.length > 1 ? parts[1] : null;
-    };
-    const pathsToDelete = [getPathFromSupabaseUrl(originalUrl), getPathFromSupabaseUrl(previewUrl)].filter(Boolean);
-    if (pathsToDelete.length > 0) {
-      supabase.storage.from('galleries').remove(pathsToDelete);
-    }
-  } else {
-    // Delete from Cloudflare R2
-    const getPathFromUrl = (url) => {
-      if (!url) return null;
-      try {
-        return new URL(url).pathname.substring(1); // Remove leading slash for S3 Key
-      } catch (err) {
-        return null;
-      }
-    };
-
-    const objectsToDelete = [getPathFromUrl(originalUrl), getPathFromUrl(previewUrl)]
-      .filter(Boolean)
-      .map(Key => ({ Key }));
-
-    if (objectsToDelete.length > 0) {
-      await s3Client.send(new DeleteObjectsCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Delete: { Objects: objectsToDelete }
-      }));
-    }
+  if (objectsToDelete.length > 0) {
+    await s3Client.send(new DeleteObjectsCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Delete: { Objects: objectsToDelete }
+    }));
   }
 
   // Delete from DB
