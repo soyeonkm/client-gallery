@@ -18,6 +18,9 @@ const s3Client = new S3Client({
     accessKeyId,
     secretAccessKey,
   },
+  // R2 rejects the default CRC32 checksums the SDK adds to presigned PUT URLs
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
 export default s3Client;

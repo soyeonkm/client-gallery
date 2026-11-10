@@ -95,43 +95,51 @@ const GalleryEdit = () => {
     const uploadedImagesList = [];
     let hasError = false;
 
+    const postJson = async (url, body) => {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      return data;
+    };
+
     for (let i = 0; i < files.length; i++) {
-      const formData = new FormData();
-      formData.append('images', files[i]);
+      const file = files[i];
 
       try {
-        const uploadedImages = await new Promise((resolve, reject) => {
+        // 1. Get a presigned URL, 2. PUT the file straight to R2, 3. let the server finalize it
+        const { url, key } = await postJson(`/api/galleries/${galleryId}/upload-url`, {
+          contentType: file.type,
+          size: file.size,
+        });
+
+        await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          xhr.open('POST', `/api/galleries/${galleryId}/images`);
+          xhr.open('PUT', url);
+          xhr.setRequestHeader('Content-Type', file.type);
 
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
-              setUploadStats(prev => ({ 
-                ...prev, 
+              setUploadStats(prev => ({
+                ...prev,
                 currentFileLoaded: event.loaded,
                 isWaitingForBackend: event.loaded === event.total
               }));
             }
           };
 
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              resolve(JSON.parse(xhr.responseText));
-            } else {
-              try {
-                const err = JSON.parse(xhr.responseText);
-                reject(new Error(err.error || 'Upload failed'));
-              } catch {
-                reject(new Error('Upload failed'));
-              }
-            }
-          };
-
-          xhr.onerror = () => reject(new Error('Network error'));
-          xhr.send(formData);
+          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300
+            ? resolve()
+            : reject(new Error(`Storage upload failed (${xhr.status})`)));
+          xhr.onerror = () => reject(new Error('Network error (check R2 CORS allows PUT from this site)'));
+          xhr.send(file);
         });
 
-        uploadedImagesList.push(...uploadedImages);
+        const uploadedImage = await postJson(`/api/galleries/${galleryId}/images`, { key });
+        uploadedImagesList.push(uploadedImage);
         setUploadStats(prev => ({
           ...prev,
           currentFileIndex: prev.currentFileIndex + 1,
