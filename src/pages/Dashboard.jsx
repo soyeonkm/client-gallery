@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import CreateGalleryModal from '../components/CreateGalleryModal';
+import { AppHeader, Spinner } from '../components/Brand';
 
 const Dashboard = () => {
   const { user, signOut } = useAuth();
@@ -9,6 +10,7 @@ const Dashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [createError, setCreateError] = useState('');
   const [copyFeedback, setCopyFeedback] = useState(null);
 
   useEffect(() => {
@@ -24,13 +26,19 @@ const Dashboard = () => {
       setGalleries(data || []);
     } catch (err) {
       console.error('Error fetching galleries:', err);
-      setError('Failed to load galleries.');
+      setError('We couldn’t load your galleries. Please refresh the page.');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const openModal = () => {
+    setCreateError('');
+    setIsModalOpen(true);
+  };
+
   const handleCreateGallery = async ({ title, photographer_name }) => {
+    setCreateError('');
     try {
       const res = await fetch('/api/galleries', {
         method: 'POST',
@@ -38,21 +46,19 @@ const Dashboard = () => {
         body: JSON.stringify({ title, photographer_name }),
       });
       const data = await res.json();
-      
       if (!res.ok) throw new Error(data.error);
-      
-      if (data) {
-        setGalleries([data, ...galleries]);
-        setIsModalOpen(false);
-      }
+
+      setGalleries([data, ...galleries]);
+      setIsModalOpen(false);
     } catch (err) {
       console.error('Error creating gallery:', err);
-      alert('Failed to create gallery. Make sure the database tables are set up correctly.');
+      setCreateError('The gallery couldn’t be created. Please try again.');
     }
   };
 
   const handleDeleteGallery = async (gallery) => {
     if (!window.confirm(`Delete "${gallery.title}" and all its photos? This cannot be undone.`)) return;
+    setError(null);
     try {
       const res = await fetch(`/api/galleries/${gallery.id}`, { method: 'DELETE' });
       const data = await res.json();
@@ -60,7 +66,7 @@ const Dashboard = () => {
       setGalleries((prev) => prev.filter((g) => g.id !== gallery.id));
     } catch (err) {
       console.error('Error deleting gallery:', err);
-      alert(`Failed to delete gallery: ${err.message}`);
+      setError(`“${gallery.title}” couldn’t be deleted: ${err.message}`);
     }
   };
 
@@ -72,95 +78,81 @@ const Dashboard = () => {
       setTimeout(() => setCopyFeedback(null), 2000);
     } catch (err) {
       console.error('Failed to copy!', err);
-      alert('Failed to copy link.');
+      setError(`Couldn’t copy automatically. The link is: ${url}`);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">Photographer Dashboard</h1>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-500 hidden sm:inline-block">{user.email}</span>
-            <button 
-              onClick={signOut}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm font-medium transition-colors"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen">
+      <AppHeader>
+        <span className="hidden text-sm text-ink-soft sm:inline">{user.email}</span>
+        <button onClick={signOut} className="btn btn-secondary px-4 py-2">
+          Sign out
+        </button>
+      </AppHeader>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-xl font-semibold">Your Galleries</h2>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm font-medium transition-colors shadow-sm"
-          >
-            + Create New Gallery
+      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-6">
+          <div>
+            <p className="eyebrow">Dashboard</p>
+            <h1 className="mt-1 font-serif text-4xl font-medium">Your galleries</h1>
+          </div>
+          <button onClick={openModal} className="btn btn-primary">
+            New gallery
           </button>
         </div>
 
-        {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-md mb-6 border border-red-100">
-            {error}
-          </div>
-        )}
+        {error && <div className="notice-error mb-6">{error}</div>}
 
         {isLoading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <div className="flex justify-center py-16 text-ink">
+            <Spinner className="h-6 w-6" />
           </div>
         ) : galleries.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-lg border border-dashed border-gray-300">
-            <p className="text-gray-500 mb-4">You haven't created any galleries yet.</p>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="text-indigo-600 hover:text-indigo-800 font-medium"
-            >
+          <div className="card px-6 py-16 text-center">
+            <h2 className="font-serif text-2xl font-medium">No galleries yet</h2>
+            <p className="mt-2 text-sm text-ink-soft">
+              Create a gallery, upload your photos, and send your client a private link.
+            </p>
+            <button onClick={openModal} className="btn btn-primary mt-6">
               Create your first gallery
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {galleries.map((gallery) => (
-              <div key={gallery.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow flex flex-col">
-                <div className="p-6 flex-grow">
-                  <h3 className="text-lg font-bold text-gray-900 mb-1 line-clamp-1">{gallery.title}</h3>
-                  <p className="text-sm text-gray-500 mb-4">By {gallery.photographer_name}</p>
-                  <p className="text-xs text-gray-400">
-                    Created {new Date(gallery.created_at).toLocaleDateString()}
+              <div key={gallery.id} className="card flex flex-col">
+                <div className="flex-grow p-6">
+                  <h3 className="line-clamp-1 font-serif text-2xl font-medium">{gallery.title}</h3>
+                  <p className="mt-1 text-sm text-ink-soft">By {gallery.photographer_name}</p>
+                  <p className="eyebrow mt-4">
+                    Created{' '}
+                    {new Date(gallery.created_at).toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
                   </p>
                 </div>
-                
-                <div className="bg-gray-50 px-6 py-3 border-t border-gray-100 flex justify-between items-center">
-                  <Link
-                    to={`/gallery/${gallery.id}/edit`}
-                    className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-                  >
-                    Edit Settings
+
+                <div className="flex items-center justify-between border-t border-line px-6 py-3 text-sm">
+                  <Link to={`/gallery/${gallery.id}/edit`} className="font-medium text-ink hover:text-bean">
+                    Manage
                   </Link>
-                  <button
-                    onClick={() => handleDeleteGallery(gallery)}
-                    className="text-sm font-medium text-red-600 hover:text-red-800"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => copyToClipboard(gallery.id)}
-                    className="text-sm font-medium text-gray-600 hover:text-gray-900 flex items-center"
-                  >
-                    {copyFeedback === gallery.id ? (
-                      <span className="text-green-600">Copied!</span>
-                    ) : (
-                      'Copy Link'
-                    )}
-                  </button>
+                  <div className="flex items-center gap-5">
+                    <button
+                      onClick={() => copyToClipboard(gallery.id)}
+                      className="font-medium text-ink-soft hover:text-ink"
+                    >
+                      {copyFeedback === gallery.id ? <span className="text-emerald-700">Link copied</span> : 'Copy link'}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteGallery(gallery)}
+                      className="font-medium text-ink-muted hover:text-red-800"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -168,10 +160,11 @@ const Dashboard = () => {
         )}
       </main>
 
-      <CreateGalleryModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onSubmit={handleCreateGallery} 
+      <CreateGalleryModal
+        isOpen={isModalOpen}
+        error={createError}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleCreateGallery}
       />
     </div>
   );

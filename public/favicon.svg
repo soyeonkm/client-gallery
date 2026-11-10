@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#1C1B19"/>
+  <!-- coffee bean: ellipse with a curved centre seam -->
+  <g transform="rotate(-30 32 32)">
+    <ellipse cx="32" cy="32" rx="15" ry="21" fill="#FAF8F5"/>
+    <path d="M32 12 C 25 24, 39 40, 32 52" fill="none" stroke="#1C1B19" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -6,6 +6,7 @@ import PhotoAlbum from 'react-photo-album';
 import 'react-photo-album/styles.css';
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
+import { FullPageSpinner, Spinner, Wordmark } from '../components/Brand';
 
 const GalleryView = () => {
   const { galleryId } = useParams();
@@ -17,6 +18,7 @@ const GalleryView = () => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(-1);
   const [isSingleDownloading, setIsSingleDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -92,6 +94,7 @@ const GalleryView = () => {
   const handleDownloadAll = async () => {
     if (images.length === 0) return;
     setIsDownloading(true);
+    setDownloadError('');
 
     try {
       const zip = new JSZip();
@@ -125,77 +128,70 @@ const GalleryView = () => {
       saveAs(content, `${safeTitle}_photos.zip`);
     } catch (err) {
       console.error('Error generating zip:', err);
-      alert('Failed to generate the ZIP file. Please try again.');
+      setDownloadError('The download couldn’t be prepared. Please try again.');
     } finally {
       setIsDownloading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
+  if (loading) return <FullPageSpinner />;
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Oops!</h2>
-          <p className="text-gray-500">{error}</p>
-        </div>
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 text-center">
+        <h1 className="font-serif text-4xl font-medium">This gallery isn’t available</h1>
+        <p className="mt-3 max-w-sm text-ink-soft">
+          The link may be incorrect, or the gallery may have been removed. Please check with your photographer.
+        </p>
+        <p className="mt-12 text-xs text-ink-muted">
+          <Wordmark className="text-base" />
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <header className="bg-white py-16 px-4 sm:px-6 lg:px-8 border-b border-gray-200">
-        <div className="max-w-7xl mx-auto flex flex-col items-center relative">
-          <h1 className="text-4xl sm:text-5xl font-serif text-gray-900 tracking-tight text-center">
-            {gallery?.title}
-          </h1>
-          <p className="mt-3 text-sm sm:text-base text-gray-500 uppercase tracking-widest font-medium text-center">
-            Photography by {gallery?.photographer_name}
+    <div className="flex min-h-screen flex-col">
+      <header className="border-b border-line px-4 pb-12 pt-16 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
+          <p className="eyebrow">Photography by {gallery?.photographer_name}</p>
+          <h1 className="mt-4 font-serif text-4xl font-medium leading-tight sm:text-6xl">{gallery?.title}</h1>
+          <p className="mt-4 text-sm text-ink-soft">
+            {images.length} {images.length === 1 ? 'photograph' : 'photographs'}
           </p>
-          <div className="mt-8 sm:absolute sm:right-0 sm:top-1/2 sm:-translate-y-1/2 sm:mt-0">
-            <button
-              onClick={handleDownloadAll}
-              disabled={isDownloading || images.length === 0}
-              className="inline-flex items-center px-6 py-3 bg-gray-900 text-white text-sm font-semibold shadow-sm hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isDownloading ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Generating ZIP...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Download All
-                </>
-              )}
-            </button>
-          </div>
+          <button
+            onClick={handleDownloadAll}
+            disabled={isDownloading || images.length === 0}
+            className="btn btn-secondary mt-8"
+          >
+            {isDownloading ? (
+              <>
+                <Spinner className="h-4 w-4" />
+                Preparing download…
+              </>
+            ) : (
+              <>
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download all
+              </>
+            )}
+          </button>
+          {downloadError && <div className="notice-error mt-6 text-left">{downloadError}</div>}
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-4 sm:p-8 mt-4">
+      <main className="mx-auto w-full max-w-7xl flex-grow p-4 sm:p-8">
         {photos.length === 0 ? (
-          <p className="text-gray-500 italic text-center mt-12">No images in this gallery yet.</p>
+          <p className="mt-12 text-center font-serif text-xl italic text-ink-soft">No photographs here yet.</p>
         ) : (
           <div className="photo-album-container">
             <PhotoAlbum
               layout="rows"
               photos={photos}
               targetRowHeight={300}
+              spacing={8}
               onClick={({ index }) => setLightboxIndex(index)}
             />
 
@@ -210,15 +206,16 @@ const GalleryView = () => {
                     key="download"
                     type="button"
                     title="Download photo"
+                    aria-label="Download photo"
                     disabled={isSingleDownloading}
                     onClick={handleDownloadSingle}
                     className="yarl__button"
                     style={{ opacity: isSingleDownloading ? 0.5 : 1 }}
                   >
                     {isSingleDownloading ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                     ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     )}
                   </button>,
                   "close"
@@ -226,15 +223,19 @@ const GalleryView = () => {
               }}
               styles={{
                 root: {
-                  "--yarl__color_backdrop": "rgba(255, 255, 255, 0.98)",
-                  "--yarl__color_button": "#bcbdbfff",
-                  "--yarl__color_button_active": "#d3d4d6ff",
+                  "--yarl__color_backdrop": "rgba(250, 248, 245, 0.98)",
+                  "--yarl__color_button": "#57534E",
+                  "--yarl__color_button_active": "#1C1B19",
                 }
               }}
             />
           </div>
         )}
       </main>
+
+      <footer className="border-t border-line py-8 text-center text-xs text-ink-muted">
+        Delivered with <Wordmark className="text-sm" />
+      </footer>
     </div>
   );
 };

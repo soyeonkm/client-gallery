@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const CreateGalleryModal = ({ isOpen, onClose, onSubmit }) => {
+const CreateGalleryModal = ({ isOpen, error, onClose, onSubmit }) => {
   const [title, setTitle] = useState('');
   const [photographerName, setPhotographerName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,58 +17,49 @@ const CreateGalleryModal = ({ isOpen, onClose, onSubmit }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-        <h2 className="text-xl font-bold mb-4 text-gray-900">Create New Gallery</h2>
-        
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label htmlFor="gallery-title" className="block text-sm font-medium text-gray-700 mb-1">
-              Gallery Name
-            </label>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-4">
+      <div role="dialog" aria-modal="true" aria-labelledby="create-gallery-title" className="card w-full max-w-md p-8">
+        <h2 id="create-gallery-title" className="mb-6 font-serif text-3xl font-medium">
+          New gallery
+        </h2>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label htmlFor="gallery-title" className="label">Gallery name</label>
             <input
               id="gallery-title"
               type="text"
               required
               maxLength={100}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="input"
               placeholder="e.g. Smith Wedding"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
           </div>
-          
-          <div className="mb-6">
-            <label htmlFor="photographer-name" className="block text-sm font-medium text-gray-700 mb-1">
-              Photographer Name
-            </label>
+
+          <div>
+            <label htmlFor="photographer-name" className="label">Photographer name</label>
             <input
               id="photographer-name"
               type="text"
               required
               maxLength={100}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g. Jane Doe"
+              className="input"
+              placeholder="Shown to your client"
               value={photographerName}
               onChange={(e) => setPhotographerName(e.target.value)}
             />
           </div>
-          
-          <div className="flex justify-end space-x-3">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-            >
+
+          {error && <div className="notice-error">{error}</div>}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} disabled={isSubmitting} className="btn btn-secondary">
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-            >
-              {isSubmitting ? 'Creating...' : 'Create Gallery'}
+            <button type="submit" disabled={isSubmitting} className="btn btn-primary">
+              {isSubmitting ? 'Creating…' : 'Create gallery'}
             </button>
           </div>
         </form>
