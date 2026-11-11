@@ -162,25 +162,28 @@ const GalleryView = () => {
           {gallery?.is_preview && (
             <p className="eyebrow mt-2 text-bean">Preview · Photos are watermarked</p>
           )}
-          <button
-            onClick={handleDownloadAll}
-            disabled={isDownloading || images.length === 0}
-            className="btn btn-secondary mt-8"
-          >
-            {isDownloading ? (
-              <>
-                <Spinner className="h-4 w-4" />
-                Preparing download…
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download all
-              </>
-            )}
-          </button>
+          {/* No downloads while the gallery is a preview */}
+          {!gallery?.is_preview && (
+            <button
+              onClick={handleDownloadAll}
+              disabled={isDownloading || images.length === 0}
+              className="btn btn-secondary mt-8"
+            >
+              {isDownloading ? (
+                <>
+                  <Spinner className="h-4 w-4" />
+                  Preparing download…
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download all
+                </>
+              )}
+            </button>
+          )}
           {downloadError && <div className="notice-error mt-6 text-left">{downloadError}</div>}
         </div>
       </header>
@@ -204,7 +207,7 @@ const GalleryView = () => {
               index={lightboxIndex}
               close={() => setLightboxIndex(-1)}
               toolbar={{
-                buttons: [
+                buttons: gallery?.is_preview ? ['close'] : [
                   <button
                     key="download"
                     type="button"
