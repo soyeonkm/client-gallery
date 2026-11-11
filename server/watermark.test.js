@@ -36,7 +36,14 @@ const tests = {
     const plain = await sharp(await grey(3000, 2000)).resize(1200).jpeg().toBuffer();
     const marked = await renderWatermark(await grey(3000, 2000), 'Jane Doe');
     const [before, after] = [await meanBrightness(plain), await meanBrightness(marked)];
-    assert.ok(after > before + 2, `expected brighter output, got ${before.toFixed(1)} -> ${after.toFixed(1)}`);
+    assert.ok(after > before + 3.5, `watermark not prominent enough: ${before.toFixed(1)} -> ${after.toFixed(1)}`);
+  },
+
+  'watermark uses the bundled Cormorant Garamond Bold font (title serif)': async () => {
+    const { WATERMARK_FONT_FILE } = await import('./watermark.js');
+    const { existsSync } = await import('node:fs');
+    assert.match(WATERMARK_FONT_FILE, /CormorantGaramond-Bold\.ttf$/);
+    assert.ok(existsSync(WATERMARK_FONT_FILE), `missing ${WATERMARK_FONT_FILE}`);
   },
 
   'tiny image still gets watermarked at its own size': async () => {

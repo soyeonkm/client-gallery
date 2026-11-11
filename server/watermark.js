@@ -6,10 +6,10 @@ import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sd
 import s3Client from './r2Config.js';
 
 // Bundled font: Vercel's servers have no system fonts, so text must not rely on them
-const FONT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'Inter-Medium.ttf');
+export const WATERMARK_FONT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'CormorantGaramond-Bold.ttf');
 
 const MAX_EDGE = 1200;
-const OPACITY = 0.4;
+const OPACITY = 0.5;
 const ANGLE = -30;
 
 // Pango markup: brand and names must be escaped (e.g. "&" breaks the renderer otherwise)
@@ -41,12 +41,12 @@ export const staggerRows = async (cell) => {
 // rotated as a whole and cropped to the photo, so the diagonal rows are dense and uniform
 const renderOverlay = async (width, height, name) => {
   const longEdge = Math.max(width, height);
-  const fontSize = Math.max(10, Math.round(longEdge * 0.026));
+  const fontSize = Math.max(10, Math.round(longEdge * 0.034));
   const text = await sharp({
     text: {
       text: `<span foreground="white">${watermarkText(name)}</span>`,
-      font: `Inter Medium ${fontSize}`,
-      fontfile: FONT_FILE,
+      font: `Cormorant Garamond Bold ${fontSize}`,
+      fontfile: WATERMARK_FONT_FILE,
       dpi: 72,
       rgba: true,
     },
