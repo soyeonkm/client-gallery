@@ -34,8 +34,9 @@ const galleries = must(await admin.from('galleries').select('id, title, photogra
 for (const gallery of galleries) {
   const images = must(await admin.from('images').select('id, watermarked_url').eq('gallery_id', gallery.id));
   const outdated = images.filter((image) => needsWatermark(image)).length;
-  if (outdated && !dryRun) await ensureWatermarks(admin, gallery);
-  console.log(`${outdated ? (dryRun ? 'would refresh' : 'refreshed') : 'up to date'}  ${outdated}/${images.length}  ${gallery.title}`);
+  const { missing } = outdated && !dryRun ? await ensureWatermarks(admin, gallery) : { missing: [] };
+  console.log(`${outdated ? (dryRun ? 'would refresh' : 'refreshed') : 'up to date'}  ${outdated - missing.length}/${images.length}  ${gallery.title}`);
+  if (missing.length) console.log(`   skipped ${missing.length} photo(s) whose files are missing from storage: ${missing.join(', ')}`);
 }
 
 // 2. Delete every watermark file no image row points to (older styles, failed uploads, removed photos)

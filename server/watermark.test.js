@@ -115,8 +115,30 @@ const tests = {
     const emptyGallery = {
       from: () => ({ select: () => ({ eq: async () => ({ data: [], error: null }) }) }),
     };
-    const created = await ensureWatermarks(emptyGallery, { id: 'g1', photographer_name: 'Jane Doe' });
-    assert.equal(created, 0);
+    const result = await ensureWatermarks(emptyGallery, { id: 'g1', photographer_name: 'Jane Doe' });
+    assert.deepEqual(result, { created: 0, missing: [] });
+  },
+
+  'ensureWatermarks skips photos whose files are gone and keeps going': async () => {
+    const { ensureWatermarks } = await import('./watermark.js');
+    const images = [
+      { id: 'gone', preview_url: 'https://r2.example/g1/gone_preview.jpg', watermarked_url: null },
+      { id: 'fine', preview_url: 'https://r2.example/g1/fine_preview.jpg', watermarked_url: null },
+    ];
+    const updated = [];
+    const supabase = {
+      from: () => ({
+        select: () => ({ eq: async () => ({ data: images, error: null }) }),
+        update: (row) => ({ eq: (_col, id) => ({ select: async () => { updated.push([id, row.watermarked_url]); return { data: [{ id }], error: null }; } }) }),
+      }),
+    };
+    const createCopy = async ({ sourceKey }) => {
+      if (sourceKey.includes('gone')) throw Object.assign(new Error('The specified key does not exist.'), { name: 'NoSuchKey' });
+      return 'https://r2.example/g1/w/v/new.jpg';
+    };
+    const result = await ensureWatermarks(supabase, { id: 'g1', photographer_name: 'Jane' }, { createCopy });
+    assert.deepEqual(result, { created: 1, missing: ['gone'] });
+    assert.deepEqual(updated, [['fine', 'https://r2.example/g1/w/v/new.jpg']]);
   },
 };
 

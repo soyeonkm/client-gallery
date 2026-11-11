@@ -175,7 +175,13 @@ export const createWatermarkedCopy = async ({ galleryId, sourceKey, photographer
 
 // Creates copies that are missing or from an outdated style, or new copies for every photo when regenerate
 // is set (e.g. after a name change). Order per photo: write new copy, point the row at it, then delete the old copy.
-export const ensureWatermarks = async (supabase, gallery, { regenerate = false } = {}) => {
+// Photos whose source files no longer exist in R2 are skipped and reported in `missing`; they have nothing
+// to watermark and never appear in preview mode (get_gallery_photos leaves out rows without a copy).
+export const ensureWatermarks = async (
+  supabase,
+  gallery,
+  { regenerate = false, createCopy = createWatermarkedCopy } = {}
+) => {
   const { data: images, error } = await supabase
     .from('images')
     .select('id, image_url, preview_url, watermarked_url')
@@ -183,15 +189,24 @@ export const ensureWatermarks = async (supabase, gallery, { regenerate = false }
   if (error) throw error;
 
   let created = 0;
+  const missing = [];
   // ponytail: one photo at a time (~0.3s each) fits Vercel's 300s limit up to a few hundred photos; use a queue beyond that
   for (const image of images) {
     if (!needsWatermark(image, { regenerate })) continue;
 
-    const watermarkedUrl = await createWatermarkedCopy({
-      galleryId: gallery.id,
-      sourceKey: r2KeyFromUrl(image.preview_url || image.image_url),
-      photographerName: gallery.photographer_name,
-    });
+    let watermarkedUrl;
+    try {
+      watermarkedUrl = await createCopy({
+        galleryId: gallery.id,
+        sourceKey: r2KeyFromUrl(image.preview_url || image.image_url),
+        photographerName: gallery.photographer_name,
+      });
+    } catch (err) {
+      if (err.name !== 'NoSuchKey') throw err;
+      console.warn(`Skipping watermark for image ${image.id}: its source file is missing from storage`);
+      missing.push(image.id);
+      continue;
+    }
 
     const { data: updated, error: updateError } = await supabase
       .from('images')
@@ -209,7 +224,7 @@ export const ensureWatermarks = async (supabase, gallery, { regenerate = false }
         .catch((err) => console.error(`Failed to delete old watermark ${oldKey}:`, err));
     }
   }
-  return created;
+  return { created, missing };
 };
 
 // What saving gallery details must do to the watermarked copies:
