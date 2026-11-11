@@ -11,6 +11,7 @@ import s3Client from './r2Config.js';
 import { PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { photographerNameError } from './gallery.js';
+import { isCronAuthorized } from './heartbeat.js';
 import { publicUrl, r2KeyFromUrl, createWatermarkedCopy, ensureWatermarks, watermarkAction } from './watermark.js';
 
 const app = express();
@@ -152,6 +153,20 @@ app.get('/api/auth/user', async (req, res) => {
   }
 
   res.json({ user });
+});
+
+// Keep-alive: Vercel Cron calls this every 3 days so the free Supabase project never pauses (see vercel.json)
+app.get('/api/heartbeat', async (req, res) => {
+  if (!isCronAuthorized(req.headers.authorization, process.env.CRON_SECRET)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false } });
+  const { data: id, error } = await supabase.rpc('record_heartbeat', { p_message: 'heartbeat from Vercel cron' });
+  if (error) {
+    console.error('Heartbeat failed:', error);
+    return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true, recorded: id !== null, id });
 });
 
 // Gallery Routes

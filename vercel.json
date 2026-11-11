@@ -14,5 +14,11 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/heartbeat",
+      "schedule": "0 12 */3 * *"
+    }
   ]
 }
