@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import s3Client from './r2Config.js';
 import { PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { publicUrl, r2KeyFromUrl, createWatermarkedCopy } from './watermark.js';
+import { publicUrl, r2KeyFromUrl, createWatermarkedCopy, ensureWatermarks, watermarkAction } from './watermark.js';
 
 const app = express();
 const port = 3000;
@@ -170,7 +170,7 @@ app.get('/api/galleries/:id', async (req, res) => {
   const supabase = getSupabaseClient(req);
   const { data, error } = await supabase
     .from('galleries')
-    .select('id, title, photographer_name, created_at, owner_id')
+    .select('id, title, photographer_name, created_at, owner_id, is_preview')
     .eq('id', req.params.id)
     .single();
 
@@ -193,13 +193,16 @@ app.post('/api/galleries', requireAuth, async (req, res) => {
 
 // Update gallery settings
 app.put('/api/galleries/:id', requireAuth, async (req, res) => {
-  const { title, photographer_name } = req.body;
+  const { title, photographer_name, is_preview } = req.body;
+  if (is_preview !== undefined && typeof is_preview !== 'boolean') {
+    return res.status(400).json({ error: 'is_preview must be true or false.' });
+  }
   const supabase = getSupabaseClient(req);
 
   // Verify ownership first
   const { data: gallery, error: fetchError } = await supabase
     .from('galleries')
-    .select('owner_id')
+    .select('owner_id, photographer_name, is_preview')
     .eq('id', req.params.id)
     .single();
 
@@ -207,9 +210,26 @@ app.put('/api/galleries/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
+  const next = { title, photographer_name, is_preview: is_preview ?? gallery.is_preview };
+
+  // Copies must exist (and carry the current name) before the gallery can be shown in preview mode
+  const action = watermarkAction(gallery, next);
+  if (action !== 'none') {
+    try {
+      await ensureWatermarks(
+        supabase,
+        { id: req.params.id, photographer_name: next.photographer_name },
+        { regenerate: action === 'regenerate' }
+      );
+    } catch (err) {
+      console.error('Applying watermarks failed:', err);
+      return res.status(500).json({ error: 'Couldn’t apply watermarks. Nothing was changed; please try again.' });
+    }
+  }
+
   const { data, error } = await supabase
     .from('galleries')
-    .update({ title, photographer_name })
+    .update(next)
     .eq('id', req.params.id)
     .select();
 
@@ -270,14 +290,27 @@ app.delete('/api/galleries/:id', requireAuth, async (req, res) => {
 
 // Images Routes
 
+// Public: [{ id, created_at, display_url, download_url }], watermarked when the gallery is in preview mode.
+// ?as=owner (editor only): full rows incl. clean URLs, for the verified gallery owner.
 app.get('/api/galleries/:id/images', async (req, res) => {
   const supabase = getSupabaseClient(req);
-  const { data, error } = await supabase
-    .from('images')
-    .select('*')
-    .eq('gallery_id', req.params.id)
-    .order('created_at', { ascending: false });
 
+  if (req.query.as === 'owner') {
+    const token = req.cookies.access_token;
+    const { data: { user } = {} } = token ? await supabase.auth.getUser(token) : {};
+    const { data: gallery } = await supabase.from('galleries').select('owner_id').eq('id', req.params.id).single();
+    if (!user || !gallery || gallery.owner_id !== user.id) return res.status(403).json({ error: 'Forbidden' });
+
+    const { data, error } = await supabase
+      .from('images')
+      .select('*')
+      .eq('gallery_id', req.params.id)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data);
+  }
+
+  const { data, error } = await supabase.rpc('get_gallery_photos', { p_gallery_id: req.params.id });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });

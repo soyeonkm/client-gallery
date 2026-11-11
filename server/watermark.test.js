@@ -49,6 +49,17 @@ const tests = {
     await renderWatermark(await grey(1600, 1000), 'Tom & Jerry <Studio>');
   },
 
+  'watermarkAction decides what a gallery save must do to the copies': async () => {
+    const { watermarkAction } = await import('./watermark.js');
+    const before = { title: 'A', photographer_name: 'Jane', is_preview: false };
+    assert.equal(watermarkAction(before, { ...before, photographer_name: 'Jane Doe' }), 'regenerate');
+    assert.equal(watermarkAction({ ...before, is_preview: true }, { ...before, is_preview: true, photographer_name: 'J' }), 'regenerate');
+    assert.equal(watermarkAction(before, { ...before, is_preview: true }), 'fill');
+    assert.equal(watermarkAction(before, { ...before, title: 'B' }), 'none');
+    assert.equal(watermarkAction({ ...before, is_preview: true }, { ...before, is_preview: false }), 'none');
+    assert.equal(watermarkAction({ ...before, is_preview: true }, { ...before, is_preview: true }), 'none');
+  },
+
   'ensureWatermarks on a gallery with no photos creates nothing': async () => {
     const { ensureWatermarks } = await import('./watermark.js');
     const emptyGallery = {

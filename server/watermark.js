@@ -137,3 +137,11 @@ export const ensureWatermarks = async (supabase, gallery, { regenerate = false }
   }
   return created;
 };
+
+// What saving gallery details must do to the watermarked copies:
+// the name is baked into every copy, so a rename regenerates; turning preview on fills in any missing copies.
+export const watermarkAction = (before, after) => {
+  if (after.photographer_name !== before.photographer_name) return 'regenerate';
+  if (after.is_preview && !before.is_preview) return 'fill';
+  return 'none';
+};
