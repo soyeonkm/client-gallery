@@ -94,6 +94,22 @@ const tests = {
     assert.equal(watermarkAction({ ...before, is_preview: true }, { ...before, is_preview: true }), 'none');
   },
 
+  'new copies are stored under the current style version': async () => {
+    const { WATERMARK_STYLE_VERSION, watermarkKey } = await import('./watermark.js');
+    assert.match(WATERMARK_STYLE_VERSION, /^[0-9a-f]{12}$/);
+    assert.match(watermarkKey('g1'), new RegExp(`^g1/w/${WATERMARK_STYLE_VERSION}/[0-9a-f-]{36}\\.jpg$`));
+  },
+
+  'copies from another style version (or none) count as outdated': async () => {
+    const { WATERMARK_STYLE_VERSION: v, needsWatermark } = await import('./watermark.js');
+    const at = (key) => ({ watermarked_url: `https://pub.example.r2.dev/${key}` });
+    assert.equal(needsWatermark({ watermarked_url: null }), true, 'missing');
+    assert.equal(needsWatermark(at(`g1/w/${v}/abc.jpg`)), false, 'current');
+    assert.equal(needsWatermark(at('g1/w/0123456789ab/abc.jpg')), true, 'other version');
+    assert.equal(needsWatermark(at('g1/w/abc.jpg')), true, 'legacy unversioned key');
+    assert.equal(needsWatermark(at(`g1/w/${v}/abc.jpg`), { regenerate: true }), true, 'forced');
+  },
+
   'ensureWatermarks on a gallery with no photos creates nothing': async () => {
     const { ensureWatermarks } = await import('./watermark.js');
     const emptyGallery = {

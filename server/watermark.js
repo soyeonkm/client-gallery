@@ -1,4 +1,6 @@
 import './fontconfig.js'; // first: before sharp renders any text
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
@@ -127,6 +129,24 @@ export const renderWatermark = async (sourceBuffer, photographerName) => {
     .toBuffer();
 };
 
+// Style version: a hash of everything that decides how a watermark looks (drawing code, settings, fonts).
+// Any change to the look changes it, which marks every existing copy as outdated (see needsWatermark).
+export const WATERMARK_STYLE_VERSION = createHash('sha256')
+  .update(JSON.stringify([MAX_EDGE, OPACITY, ANGLE]))
+  .update([escapeMarkup, watermarkSegments, renderPhrase, staggerRows, renderOverlay, renderWatermark].map(String).join('\n'))
+  .update(readFileSync(WATERMARK_FONTS.semibold.file))
+  .update(readFileSync(WATERMARK_FONTS.italic.file))
+  .update(readFileSync(path.join(FONT_DIR, 'fonts.conf')))
+  .digest('hex')
+  .slice(0, 12);
+
+// New copies live under the style version, with a UUID unrelated to the photo's other keys
+export const watermarkKey = (galleryId) => `${galleryId}/w/${WATERMARK_STYLE_VERSION}/${uuidv4()}.jpg`;
+
+// A photo needs a (new) copy when it has none, its copy is from another style version, or regeneration is forced
+export const needsWatermark = (image, { regenerate = false } = {}) =>
+  regenerate || !image.watermarked_url || !image.watermarked_url.includes(`/w/${WATERMARK_STYLE_VERSION}/`);
+
 // Public URL for an R2 key, via the configured public bucket domain
 export const publicUrl = (key) => {
   let base = process.env.R2_PUBLIC_URL.replace(/[\s\n\r]/g, '').replace(/\/$/, '');
@@ -148,13 +168,13 @@ export const createWatermarkedCopy = async ({ galleryId, sourceKey, photographer
   const Bucket = process.env.R2_BUCKET_NAME;
   const source = await s3Client.send(new GetObjectCommand({ Bucket, Key: sourceKey }));
   const body = await renderWatermark(Buffer.from(await source.Body.transformToByteArray()), photographerName);
-  const key = `${galleryId}/w/${uuidv4()}.jpg`;
+  const key = watermarkKey(galleryId);
   await s3Client.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: 'image/jpeg' }));
   return publicUrl(key);
 };
 
-// Creates missing watermarked copies for a gallery, or new copies for every photo when regenerate is set
-// (e.g. after a name change). Order per photo: write new copy, point the row at it, then delete the old copy.
+// Creates copies that are missing or from an outdated style, or new copies for every photo when regenerate
+// is set (e.g. after a name change). Order per photo: write new copy, point the row at it, then delete the old copy.
 export const ensureWatermarks = async (supabase, gallery, { regenerate = false } = {}) => {
   const { data: images, error } = await supabase
     .from('images')
@@ -165,7 +185,7 @@ export const ensureWatermarks = async (supabase, gallery, { regenerate = false }
   let created = 0;
   // ponytail: one photo at a time (~0.3s each) fits Vercel's 300s limit up to a few hundred photos; use a queue beyond that
   for (const image of images) {
-    if (!regenerate && image.watermarked_url) continue;
+    if (!needsWatermark(image, { regenerate })) continue;
 
     const watermarkedUrl = await createWatermarkedCopy({
       galleryId: gallery.id,
