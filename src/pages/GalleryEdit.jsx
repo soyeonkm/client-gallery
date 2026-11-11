@@ -14,6 +14,7 @@ const GalleryEdit = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [selectedImageIds, setSelectedImageIds] = useState(new Set());
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
     fetchGalleryData();
@@ -227,6 +228,18 @@ const GalleryEdit = () => {
     }
   };
 
+  const clientLink = `${window.location.origin}/view/${galleryId}`;
+
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(clientLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      setError(`Couldn’t copy automatically. The link is: ${clientLink}`);
+    }
+  };
+
   const progressPercent = (() => {
     // Each file counts 50% for the upload to storage, 50% for server processing
     const weight = uploadStats.uploadedBytes + uploadStats.currentFileLoaded * 0.5;
@@ -236,6 +249,9 @@ const GalleryEdit = () => {
   return (
     <div className="min-h-screen pb-16">
       <AppHeader>
+        <button onClick={handleCopyLink} className="btn btn-primary px-4 py-2">
+          {linkCopied ? 'Link copied' : 'Copy gallery link'}
+        </button>
         <a
           href={`/view/${galleryId}`}
           target="_blank"

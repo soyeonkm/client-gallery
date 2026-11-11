@@ -19,7 +19,7 @@ export const FullPageSpinner = () => (
 // Header for the photographer-facing pages
 export const AppHeader = ({ children }) => (
   <header className="border-b border-line bg-paper">
-    <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
+    <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
       <Link to="/dashboard" className="text-2xl">
         <Wordmark />
       </Link>

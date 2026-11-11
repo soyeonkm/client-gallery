@@ -123,7 +123,11 @@ const Dashboard = () => {
             {galleries.map((gallery) => (
               <div key={gallery.id} className="card flex flex-col">
                 <div className="flex-grow p-6">
-                  <h3 className="line-clamp-1 font-serif text-2xl font-medium">{gallery.title}</h3>
+                  <h3 className="line-clamp-1 font-serif text-2xl font-medium">
+                    <Link to={`/gallery/${gallery.id}/edit`} className="hover:text-bean">
+                      {gallery.title}
+                    </Link>
+                  </h3>
                   <p className="mt-1 text-sm text-ink-soft">By {gallery.photographer_name}</p>
                   <p className="eyebrow mt-4">
                     Created{' '}
