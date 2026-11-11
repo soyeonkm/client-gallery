@@ -45,6 +45,22 @@ const tests = {
     assert.deepEqual([width, height], [120, 90]);
   },
 
+  'every other row is offset by half the phrase length': async () => {
+    const { staggerRows } = await import('./watermark.js');
+    // 100x20 transparent cell with one opaque column at x=10
+    const width = 100, height = 20;
+    const raw = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y++) raw[(y * width + 10) * 4 + 3] = 255;
+    const cell = await sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer();
+
+    const { data, info } = await sharp(await staggerRows(cell)).raw().toBuffer({ resolveWithObject: true });
+    assert.deepEqual([info.width, info.height], [100, 40]);
+    const opaqueColumns = (row) =>
+      [...Array(width).keys()].filter((x) => data[(row * width + x) * info.channels + 3] > 0);
+    assert.deepEqual(opaqueColumns(5), [10], 'first row unchanged');
+    assert.deepEqual(opaqueColumns(25), [60], 'second row shifted by half (10 + 50)');
+  },
+
   'names with markup characters render without throwing': async () => {
     await renderWatermark(await grey(1600, 1000), 'Tom & Jerry <Studio>');
   },

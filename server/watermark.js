@@ -18,6 +18,25 @@ const escapeMarkup = (s) =>
 
 export const watermarkText = (name) => `${escapeMarkup('Bean & Grain')}  ·  Photography by ${escapeMarkup(name)}`;
 
+// Two-row repeat unit: the second row is the first shifted right by half its width (wrapping),
+// so rows of text are staggered like brickwork instead of lining up in columns
+export const staggerRows = async (cell) => {
+  const { width, height } = await sharp(cell).metadata();
+  const half = Math.floor(width / 2);
+  const [leftPart, rightPart] = await Promise.all([
+    sharp(cell).extract({ left: 0, top: 0, width: width - half, height }).png().toBuffer(),
+    sharp(cell).extract({ left: width - half, top: 0, width: half, height }).png().toBuffer(),
+  ]);
+  return sharp({ create: { width, height: height * 2, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([
+      { input: cell, left: 0, top: 0 },
+      { input: leftPart, left: half, top: height },
+      { input: rightPart, left: 0, top: height },
+    ])
+    .png()
+    .toBuffer();
+};
+
 // Text pattern for a width x height photo: evenly spaced rows of text on an oversized canvas,
 // rotated as a whole and cropped to the photo, so the diagonal rows are dense and uniform
 const renderOverlay = async (width, height, name) => {
@@ -34,10 +53,12 @@ const renderOverlay = async (width, height, name) => {
   }).png().toBuffer();
 
   const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
-  const { data: cell, info: cellInfo } = await sharp(text)
+  const padded = await sharp(text)
     .extend({ top: fontSize * 2, bottom: fontSize * 2, left: fontSize * 2, right: fontSize * 2, background: transparent })
     .png()
-    .toBuffer({ resolveWithObject: true });
+    .toBuffer();
+  const cell = await staggerRows(padded);
+  const cellInfo = await sharp(cell).metadata();
 
   // Square canvas covering the photo at any rotation (and at least one text cell, which sharp needs to tile)
   const side = Math.max(Math.ceil(Math.hypot(width, height)), cellInfo.width, cellInfo.height);
