@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import s3Client from './r2Config.js';
 import { PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { photographerNameError } from './gallery.js';
 import { publicUrl, r2KeyFromUrl, createWatermarkedCopy, ensureWatermarks, watermarkAction } from './watermark.js';
 
 const app = express();
@@ -180,7 +181,10 @@ app.get('/api/galleries/:id', async (req, res) => {
 });
 
 app.post('/api/galleries', requireAuth, async (req, res) => {
-  const { title, photographer_name } = req.body;
+  const { title } = req.body;
+  const nameError = photographerNameError(req.body.photographer_name);
+  if (nameError) return res.status(400).json({ error: nameError });
+  const photographer_name = req.body.photographer_name.trim();
   const supabase = getSupabaseClient(req);
 
   const { data, error } = await supabase
@@ -203,7 +207,7 @@ app.put('/api/galleries/:id', requireAuth, async (req, res) => {
   // Verify ownership first
   const { data: gallery, error: fetchError } = await supabase
     .from('galleries')
-    .select('owner_id, photographer_name, is_preview')
+    .select('owner_id, title, photographer_name, is_preview')
     .eq('id', req.params.id)
     .single();
 
@@ -211,20 +215,24 @@ app.put('/api/galleries/:id', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const next = { title, photographer_name, is_preview: is_preview ?? gallery.is_preview };
+  // Fields left out of the request keep their saved values
+  const next = {
+    title: title ?? gallery.title,
+    photographer_name: photographer_name ?? gallery.photographer_name,
+    is_preview: is_preview ?? gallery.is_preview,
+  };
+  const nameError = photographerNameError(next.photographer_name);
+  if (nameError) return res.status(400).json({ error: nameError });
+  next.photographer_name = next.photographer_name.trim();
 
   // Copies must exist (and carry the current name) before the gallery can be shown in preview mode
   const action = watermarkAction(gallery, next);
   if (action !== 'none') {
     try {
-      await ensureWatermarks(
-        supabase,
-        { id: req.params.id, photographer_name: next.photographer_name },
-        { regenerate: action === 'regenerate' }
-      );
+      await ensureWatermarks(supabase, { id: req.params.id, photographer_name: next.photographer_name });
     } catch (err) {
       console.error('Applying watermarks failed:', err);
-      return res.status(500).json({ error: 'Couldn’t apply watermarks. Nothing was changed; please try again.' });
+      return res.status(500).json({ error: 'Couldn’t finish applying watermarks, so your changes weren’t saved. Please save again — it picks up where it stopped.' });
     }
   }
 

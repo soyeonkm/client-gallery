@@ -94,20 +94,56 @@ const tests = {
     assert.equal(watermarkAction({ ...before, is_preview: true }, { ...before, is_preview: true }), 'none');
   },
 
-  'new copies are stored under the current style version': async () => {
-    const { WATERMARK_STYLE_VERSION, watermarkKey } = await import('./watermark.js');
-    assert.match(WATERMARK_STYLE_VERSION, /^[0-9a-f]{12}$/);
-    assert.match(watermarkKey('g1'), new RegExp(`^g1/w/${WATERMARK_STYLE_VERSION}/[0-9a-f-]{36}\\.jpg$`));
+  'new copies are stored under the style version and the photographer name': async () => {
+    const { watermarkFolder, watermarkKey } = await import('./watermark.js');
+    assert.match(watermarkFolder('Jane'), /^[0-9a-f]{12}-[0-9a-f]{8}$/);
+    assert.notEqual(watermarkFolder('Jane'), watermarkFolder('Jane Doe'), 'name is part of the folder');
+    assert.match(watermarkKey('g1', 'Jane'), new RegExp(`^g1/w/${watermarkFolder('Jane')}/[0-9a-f-]{36}\\.jpg$`));
   },
 
-  'copies from another style version (or none) count as outdated': async () => {
-    const { WATERMARK_STYLE_VERSION: v, needsWatermark } = await import('./watermark.js');
+  'copies with another style or another name (or none) count as outdated': async () => {
+    const { WATERMARK_STYLE_VERSION: v, watermarkFolder, needsWatermark } = await import('./watermark.js');
     const at = (key) => ({ watermarked_url: `https://pub.example.r2.dev/${key}` });
-    assert.equal(needsWatermark({ watermarked_url: null }), true, 'missing');
-    assert.equal(needsWatermark(at(`g1/w/${v}/abc.jpg`)), false, 'current');
-    assert.equal(needsWatermark(at('g1/w/0123456789ab/abc.jpg')), true, 'other version');
-    assert.equal(needsWatermark(at('g1/w/abc.jpg')), true, 'legacy unversioned key');
-    assert.equal(needsWatermark(at(`g1/w/${v}/abc.jpg`), { regenerate: true }), true, 'forced');
+    assert.equal(needsWatermark({ watermarked_url: null }, 'Jane'), true, 'missing');
+    assert.equal(needsWatermark(at(`g1/w/${watermarkFolder('Jane')}/abc.jpg`), 'Jane'), false, 'current');
+    assert.equal(needsWatermark(at(`g1/w/${watermarkFolder('Jane')}/abc.jpg`), 'Jane Doe'), true, 'renamed since');
+    assert.equal(needsWatermark(at(`g1/w/0123456789ab-${watermarkFolder('Jane').slice(13)}/abc.jpg`), 'Jane'), true, 'other style');
+    assert.equal(needsWatermark(at(`g1/w/${v}/abc.jpg`), 'Jane'), true, 'older key without name');
+    assert.equal(needsWatermark(at('g1/w/abc.jpg'), 'Jane'), true, 'legacy unversioned key');
+  },
+
+  'a missing photographer name renders instead of throwing': () => {
+    assert.ok(watermarkSegments(undefined)[2].text.endsWith('Photography by '));
+    assert.ok(watermarkSegments(null)[2].text.endsWith('Photography by '));
+  },
+
+  'fetchAllRows reads past the 1000-row cap, page by page': async () => {
+    const { fetchAllRows } = await import('./watermark.js');
+    const total = 2003;
+    const ranges = [];
+    const page = async (from, to) => {
+      ranges.push([from, to]);
+      const rows = [];
+      for (let i = from; i <= Math.min(to, total - 1); i++) rows.push({ i });
+      return { data: rows, error: null };
+    };
+    const rows = await fetchAllRows(page);
+    assert.equal(rows.length, total);
+    assert.deepEqual(ranges, [[0, 999], [1000, 1999], [2000, 2999]]);
+  },
+
+  'unusedWatermarkKeys spares referenced and freshly written files': async () => {
+    const { unusedWatermarkKeys } = await import('./watermark.js');
+    const now = Date.parse('2026-11-11T12:00:00Z');
+    const old = new Date(now - 2 * 3600e3);
+    const fresh = new Date(now - 10 * 60e3);
+    const objects = [
+      { Key: 'g1/w/v-n/used.jpg', LastModified: old },
+      { Key: 'g1/w/v-n/orphan.jpg', LastModified: old },
+      { Key: 'g1/w/v-n/just-written.jpg', LastModified: fresh },
+      { Key: 'g1/abc_original.jpg', LastModified: old },
+    ];
+    assert.deepEqual(unusedWatermarkKeys(objects, new Set(['g1/w/v-n/used.jpg']), now), ['g1/w/v-n/orphan.jpg']);
   },
 
   'ensureWatermarks on a gallery with no photos creates nothing': async () => {

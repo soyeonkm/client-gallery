@@ -1,11 +1,18 @@
 {
   "functions": {
     "api/index.js": {
-      "includeFiles": "server/fonts/**"
+      "includeFiles": "server/fonts/**",
+      "maxDuration": 300
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ]
 }

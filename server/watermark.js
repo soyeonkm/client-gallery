@@ -22,7 +22,7 @@ const ANGLE = -30;
 
 // Pango markup: brand and names must be escaped (e.g. "&" breaks the renderer otherwise)
 const escapeMarkup = (s) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
 // sharp loads one font file per text render, so the phrase is rendered as pieces and joined
 export const watermarkSegments = (name) => [
@@ -140,12 +140,19 @@ export const WATERMARK_STYLE_VERSION = createHash('sha256')
   .digest('hex')
   .slice(0, 12);
 
-// New copies live under the style version, with a UUID unrelated to the photo's other keys
-export const watermarkKey = (galleryId) => `${galleryId}/w/${WATERMARK_STYLE_VERSION}/${uuidv4()}.jpg`;
+// Folder for copies of one style and one photographer name: "<style version>-<name hash>".
+// Both are baked into the image, so a copy is current only if both match. Because each finished copy
+// already sits in the new folder, an interrupted rename resumes where it stopped instead of starting over.
+export const watermarkFolder = (photographerName) =>
+  `${WATERMARK_STYLE_VERSION}-${createHash('sha256').update(String(photographerName ?? '')).digest('hex').slice(0, 8)}`;
 
-// A photo needs a (new) copy when it has none, its copy is from another style version, or regeneration is forced
-export const needsWatermark = (image, { regenerate = false } = {}) =>
-  regenerate || !image.watermarked_url || !image.watermarked_url.includes(`/w/${WATERMARK_STYLE_VERSION}/`);
+// New copies get a UUID unrelated to the photo's other keys
+export const watermarkKey = (galleryId, photographerName) =>
+  `${galleryId}/w/${watermarkFolder(photographerName)}/${uuidv4()}.jpg`;
+
+// A photo needs a (new) copy when it has none, or its copy has another style or another name
+export const needsWatermark = (image, photographerName) =>
+  !image.watermarked_url || !image.watermarked_url.includes(`/w/${watermarkFolder(photographerName)}/`);
 
 // Public URL for an R2 key, via the configured public bucket domain
 export const publicUrl = (key) => {
@@ -168,20 +175,17 @@ export const createWatermarkedCopy = async ({ galleryId, sourceKey, photographer
   const Bucket = process.env.R2_BUCKET_NAME;
   const source = await s3Client.send(new GetObjectCommand({ Bucket, Key: sourceKey }));
   const body = await renderWatermark(Buffer.from(await source.Body.transformToByteArray()), photographerName);
-  const key = watermarkKey(galleryId);
+  const key = watermarkKey(galleryId, photographerName);
   await s3Client.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: 'image/jpeg' }));
   return publicUrl(key);
 };
 
-// Creates copies that are missing or from an outdated style, or new copies for every photo when regenerate
-// is set (e.g. after a name change). Order per photo: write new copy, point the row at it, then delete the old copy.
+// Creates copies that are missing or outdated (another style, or a name change).
+// Order per photo: write new copy, point the row at it, then delete the old copy. Finished photos already
+// count as current, so a run cut short (e.g. by the function time limit) picks up where it stopped.
 // Photos whose source files no longer exist in R2 are skipped and reported in `missing`; they have nothing
 // to watermark and never appear in preview mode (get_gallery_photos leaves out rows without a copy).
-export const ensureWatermarks = async (
-  supabase,
-  gallery,
-  { regenerate = false, createCopy = createWatermarkedCopy } = {}
-) => {
+export const ensureWatermarks = async (supabase, gallery, { createCopy = createWatermarkedCopy } = {}) => {
   const { data: images, error } = await supabase
     .from('images')
     .select('id, image_url, preview_url, watermarked_url')
@@ -192,7 +196,7 @@ export const ensureWatermarks = async (
   const missing = [];
   // ponytail: one photo at a time (~0.3s each) fits Vercel's 300s limit up to a few hundred photos; use a queue beyond that
   for (const image of images) {
-    if (!needsWatermark(image, { regenerate })) continue;
+    if (!needsWatermark(image, gallery.photographer_name)) continue;
 
     let watermarkedUrl;
     try {
@@ -234,3 +238,22 @@ export const watermarkAction = (before, after) => {
   if (after.is_preview && !before.is_preview) return 'fill';
   return 'none';
 };
+
+// Supabase returns at most 1000 rows per request; page(from, to) runs one ranged query
+export const fetchAllRows = async (page, pageSize = 1000) => {
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await page(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...data);
+    if (data.length < pageSize) return rows;
+  }
+};
+
+// Watermark files no row points to, except ones written in the last hour: a live upload or save
+// writes its copy before linking it to a row, and must not lose it to a concurrent cleanup
+export const unusedWatermarkKeys = (objects, referencedKeys, now = Date.now(), minAgeMs = 3600e3) =>
+  objects
+    .filter(({ Key, LastModified }) =>
+      /^[^/]+\/w\//.test(Key) && !referencedKeys.has(Key) && now - new Date(LastModified).getTime() > minAgeMs)
+    .map(({ Key }) => Key);
