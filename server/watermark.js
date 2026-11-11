@@ -185,19 +185,24 @@ export const createWatermarkedCopy = async ({ galleryId, sourceKey, photographer
 // count as current, so a run cut short (e.g. by the function time limit) picks up where it stopped.
 // Photos whose source files no longer exist in R2 are skipped and reported in `missing`; they have nothing
 // to watermark and never appear in preview mode (get_gallery_photos leaves out rows without a copy).
-export const ensureWatermarks = async (supabase, gallery, { createCopy = createWatermarkedCopy } = {}) => {
+// onProgress(done, total) is called once before starting and after each photo that needed work.
+export const ensureWatermarks = async (
+  supabase,
+  gallery,
+  { createCopy = createWatermarkedCopy, onProgress = () => {} } = {}
+) => {
   const { data: images, error } = await supabase
     .from('images')
     .select('id, image_url, preview_url, watermarked_url')
     .eq('gallery_id', gallery.id);
   if (error) throw error;
 
+  const todo = images.filter((image) => needsWatermark(image, gallery.photographer_name));
   let created = 0;
   const missing = [];
+  onProgress(0, todo.length);
   // ponytail: one photo at a time (~0.3s each) fits Vercel's 300s limit up to a few hundred photos; use a queue beyond that
-  for (const image of images) {
-    if (!needsWatermark(image, gallery.photographer_name)) continue;
-
+  for (const [index, image] of todo.entries()) {
     let watermarkedUrl;
     try {
       watermarkedUrl = await createCopy({
@@ -209,6 +214,7 @@ export const ensureWatermarks = async (supabase, gallery, { createCopy = createW
       if (err.name !== 'NoSuchKey') throw err;
       console.warn(`Skipping watermark for image ${image.id}: its source file is missing from storage`);
       missing.push(image.id);
+      onProgress(index + 1, todo.length);
       continue;
     }
 
@@ -227,6 +233,7 @@ export const ensureWatermarks = async (supabase, gallery, { createCopy = createW
         .send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: oldKey }))
         .catch((err) => console.error(`Failed to delete old watermark ${oldKey}:`, err));
     }
+    onProgress(index + 1, todo.length);
   }
   return { created, missing };
 };

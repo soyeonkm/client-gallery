@@ -225,25 +225,30 @@ app.put('/api/galleries/:id', requireAuth, async (req, res) => {
   if (nameError) return res.status(400).json({ error: nameError });
   next.photographer_name = next.photographer_name.trim();
 
+  const saveGallery = () => supabase.from('galleries').update(next).eq('id', req.params.id).select();
+
   // Copies must exist (and carry the current name) before the gallery can be shown in preview mode
-  const action = watermarkAction(gallery, next);
-  if (action !== 'none') {
-    try {
-      await ensureWatermarks(supabase, { id: req.params.id, photographer_name: next.photographer_name });
-    } catch (err) {
-      console.error('Applying watermarks failed:', err);
-      return res.status(500).json({ error: 'Couldn’t finish applying watermarks, so your changes weren’t saved. Please save again — it picks up where it stopped.' });
-    }
+  if (watermarkAction(gallery, next) === 'none') {
+    const { data, error } = await saveGallery();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data[0]);
   }
 
-  const { data, error } = await supabase
-    .from('galleries')
-    .update(next)
-    .eq('id', req.params.id)
-    .select();
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data[0]);
+  // Watermark work can take a while: stream one JSON line per photo ({ progress }), then { gallery } or { error }
+  res.status(200).type('application/x-ndjson');
+  const send = (line) => res.write(`${JSON.stringify(line)}\n`);
+  try {
+    await ensureWatermarks(supabase, { id: req.params.id, photographer_name: next.photographer_name }, {
+      onProgress: (done, total) => send({ progress: { done, total } }),
+    });
+  } catch (err) {
+    console.error('Applying watermarks failed:', err);
+    send({ error: 'Couldn’t finish applying watermarks, so your changes weren’t saved. Please save again — it picks up where it stopped.' });
+    return res.end();
+  }
+  const { data, error } = await saveGallery();
+  send(error ? { error: error.message } : { gallery: data[0] });
+  res.end();
 });
 
 app.delete('/api/galleries/:id', requireAuth, async (req, res) => {

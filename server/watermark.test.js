@@ -146,6 +146,33 @@ const tests = {
     assert.deepEqual(unusedWatermarkKeys(objects, new Set(['g1/w/v-n/used.jpg']), now), ['g1/w/v-n/orphan.jpg']);
   },
 
+  'ensureWatermarks reports progress after each photo that needs work': async () => {
+    const { ensureWatermarks, watermarkFolder } = await import('./watermark.js');
+    const current = `https://r2.example/g1/w/${watermarkFolder('Jane')}/done.jpg`;
+    const images = [
+      { id: 'a', preview_url: 'https://r2.example/g1/a_preview.jpg', watermarked_url: null },
+      { id: 'b', preview_url: 'https://r2.example/g1/b_preview.jpg', watermarked_url: current }, // already current
+      { id: 'c', preview_url: 'https://r2.example/g1/gone_preview.jpg', watermarked_url: null },
+      { id: 'd', preview_url: 'https://r2.example/g1/d_preview.jpg', watermarked_url: null },
+    ];
+    const supabase = {
+      from: () => ({
+        select: () => ({ eq: async () => ({ data: images, error: null }) }),
+        update: () => ({ eq: (_c, id) => ({ select: async () => ({ data: [{ id }], error: null }) }) }),
+      }),
+    };
+    const createCopy = async ({ sourceKey }) => {
+      if (sourceKey.includes('gone')) throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
+      return 'https://r2.example/g1/w/x/new.jpg';
+    };
+    const progress = [];
+    await ensureWatermarks(supabase, { id: 'g1', photographer_name: 'Jane' }, {
+      createCopy,
+      onProgress: (done, total) => progress.push([done, total]),
+    });
+    assert.deepEqual(progress, [[0, 3], [1, 3], [2, 3], [3, 3]]);
+  },
+
   'ensureWatermarks on a gallery with no photos creates nothing': async () => {
     const { ensureWatermarks } = await import('./watermark.js');
     const emptyGallery = {

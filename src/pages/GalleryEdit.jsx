@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AppHeader, Spinner } from '../components/Brand';
+import { progressColor, readSaveResponse } from '../lib/saveProgress';
 
 const GalleryEdit = () => {
   const { galleryId } = useParams();
@@ -17,6 +18,8 @@ const GalleryEdit = () => {
   const [success, setSuccess] = useState('');
   const [selectedImageIds, setSelectedImageIds] = useState(new Set());
   const [linkCopied, setLinkCopied] = useState(false);
+  // 0..1 while saving; the server streams progress when the save needs watermark work
+  const [saveProgress, setSaveProgress] = useState(0);
 
   useEffect(() => {
     fetchGalleryData();
@@ -45,6 +48,7 @@ const GalleryEdit = () => {
   const handleSettingsSubmit = async (e) => {
     e.preventDefault();
     setIsSavingSettings(true);
+    setSaveProgress(0);
     setError('');
     setSuccess('');
 
@@ -58,8 +62,8 @@ const GalleryEdit = () => {
           is_preview: gallery.is_preview
         })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update settings');
+      const data = await readSaveResponse(res, setSaveProgress);
+      setSaveProgress(1);
       setGallery(data);
       setSaved(data);
       setSuccess('Changes saved.');
@@ -325,11 +329,26 @@ const GalleryEdit = () => {
                     </span>
                   </span>
                 </label>
-                <button type="submit" disabled={isSavingSettings} className="btn btn-primary w-full">
-                  {isSavingSettings
-                    ? (gallery.is_preview || gallery.photographer_name !== saved?.photographer_name ? 'Applying watermarks…' : 'Saving…')
-                    : 'Save changes'}
-                </button>
+                <div>
+                  <button type="submit" disabled={isSavingSettings} className="btn btn-primary w-full disabled:opacity-100">
+                    {isSavingSettings ? 'Saving changes…' : 'Save changes'}
+                  </button>
+                  {isSavingSettings && (
+                    <div
+                      className="h-[3px] w-full bg-line"
+                      role="progressbar"
+                      aria-label="Saving changes"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(saveProgress * 100)}
+                    >
+                      <div
+                        className="h-full transition-all duration-300 ease-out"
+                        style={{ width: `${saveProgress * 100}%`, backgroundColor: progressColor(saveProgress) }}
+                      />
+                    </div>
+                  )}
+                </div>
               </form>
             </div>
           </section>
