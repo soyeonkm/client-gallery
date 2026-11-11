@@ -129,6 +129,7 @@ const Dashboard = () => {
                     </Link>
                   </h3>
                   <p className="mt-1 text-sm text-ink-soft">By {gallery.photographer_name}</p>
+                  {gallery.is_preview && <p className="eyebrow mt-3 text-bean">Preview</p>}
                   <p className="eyebrow mt-4">
                     Created{' '}
                     {new Date(gallery.created_at).toLocaleDateString(undefined, {

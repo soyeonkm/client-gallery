@@ -39,14 +39,14 @@ const GalleryView = () => {
         const processedPhotos = await Promise.all((imagesData || []).map(img => {
           return new Promise((resolve) => {
             const image = new Image();
-            image.src = img.preview_url || img.image_url;
+            image.src = img.display_url;
             image.onload = () => {
               resolve({
                 src: image.src,
                 width: image.width,
                 height: image.height,
                 key: img.id,
-                original_url: img.image_url
+                download_url: img.download_url
               });
             };
             image.onerror = () => {
@@ -55,7 +55,7 @@ const GalleryView = () => {
                 width: 1, // Fallback
                 height: 1,
                 key: img.id,
-                original_url: img.image_url
+                download_url: img.download_url
               });
             };
           });
@@ -78,7 +78,7 @@ const GalleryView = () => {
     if (!photo) return;
     setIsSingleDownloading(true);
     try {
-      const url = photo.original_url || photo.src;
+      const url = photo.download_url;
       const response = await fetch(url);
       const blob = await response.blob();
       const safeTitle = (gallery?.title || 'photo').replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -101,7 +101,7 @@ const GalleryView = () => {
 
       // Fetch all image blobs concurrently
       const fetchPromises = images.map(async (image, index) => {
-        const url = image.image_url;
+        const url = image.download_url;
         try {
           const response = await fetch(url);
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -159,6 +159,9 @@ const GalleryView = () => {
           <p className="mt-4 text-sm text-ink-soft">
             {images.length} {images.length === 1 ? 'photograph' : 'photographs'}
           </p>
+          {gallery?.is_preview && (
+            <p className="eyebrow mt-2 text-bean">Preview · Photos are watermarked</p>
+          )}
           <button
             onClick={handleDownloadAll}
             disabled={isDownloading || images.length === 0}

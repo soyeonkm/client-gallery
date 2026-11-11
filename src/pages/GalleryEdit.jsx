@@ -6,7 +6,9 @@ const GalleryEdit = () => {
   const { galleryId } = useParams();
   const navigate = useNavigate();
 
-  const [gallery, setGallery] = useState({ title: '', photographer_name: '' });
+  const [gallery, setGallery] = useState({ title: '', photographer_name: '', is_preview: false });
+  // Last saved details: the preview tag and the save label reflect what's stored, not unsaved edits
+  const [saved, setSaved] = useState(null);
   const [images, setImages] = useState([]);
 
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -24,12 +26,13 @@ const GalleryEdit = () => {
     try {
       const [galleryRes, imagesRes] = await Promise.all([
         fetch(`/api/galleries/${galleryId}`),
-        fetch(`/api/galleries/${galleryId}/images`)
+        fetch(`/api/galleries/${galleryId}/images?as=owner`)
       ]);
 
       if (!galleryRes.ok) throw new Error('Failed to load gallery settings.');
       const galleryData = await galleryRes.json();
       setGallery(galleryData);
+      setSaved(galleryData);
 
       if (!imagesRes.ok) throw new Error('Failed to load images.');
       const imagesData = await imagesRes.json();
@@ -51,13 +54,14 @@ const GalleryEdit = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: gallery.title,
-          photographer_name: gallery.photographer_name
+          photographer_name: gallery.photographer_name,
+          is_preview: gallery.is_preview
         })
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update settings');
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update settings');
+      setGallery(data);
+      setSaved(data);
       setSuccess('Changes saved.');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
@@ -267,7 +271,12 @@ const GalleryEdit = () => {
           <button onClick={() => navigate('/dashboard')} className="eyebrow hover:text-ink">
             &larr; Your galleries
           </button>
-          <h1 className="mt-2 font-serif text-4xl font-medium">{gallery.title || ' '}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <h1 className="font-serif text-4xl font-medium">{saved?.title || ' '}</h1>
+            {saved?.is_preview && (
+              <span className="eyebrow rounded-sm border border-bean/40 px-2 py-1 text-bean">Preview on</span>
+            )}
+          </div>
         </div>
 
         {error && <div className="notice-error mb-6">{error}</div>}
@@ -301,8 +310,25 @@ const GalleryEdit = () => {
                     className="input"
                   />
                 </div>
+                <label htmlFor="edit-preview" className="flex cursor-pointer items-start gap-3 border-t border-line pt-5">
+                  <input
+                    id="edit-preview"
+                    type="checkbox"
+                    checked={!!gallery.is_preview}
+                    onChange={e => setGallery({ ...gallery, is_preview: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 rounded-sm border-line accent-ink"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">Preview mode</span>
+                    <span className="mt-0.5 block text-xs text-ink-soft">
+                      Watermark photos and limit client downloads to 1200px previews.
+                    </span>
+                  </span>
+                </label>
                 <button type="submit" disabled={isSavingSettings} className="btn btn-primary w-full">
-                  {isSavingSettings ? 'Saving…' : 'Save changes'}
+                  {isSavingSettings
+                    ? (gallery.is_preview || gallery.photographer_name !== saved?.photographer_name ? 'Applying watermarks…' : 'Saving…')
+                    : 'Save changes'}
                 </button>
               </form>
             </div>
