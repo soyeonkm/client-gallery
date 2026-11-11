@@ -48,6 +48,15 @@ const tests = {
   'names with markup characters render without throwing': async () => {
     await renderWatermark(await grey(1600, 1000), 'Tom & Jerry <Studio>');
   },
+
+  'ensureWatermarks on a gallery with no photos creates nothing': async () => {
+    const { ensureWatermarks } = await import('./watermark.js');
+    const emptyGallery = {
+      from: () => ({ select: () => ({ eq: async () => ({ data: [], error: null }) }) }),
+    };
+    const created = await ensureWatermarks(emptyGallery, { id: 'g1', photographer_name: 'Jane Doe' });
+    assert.equal(created, 0);
+  },
 };
 
 let failed = 0;

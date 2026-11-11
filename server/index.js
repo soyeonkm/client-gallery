@@ -7,8 +7,9 @@ import { fileTypeFromBuffer } from 'file-type';
 import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import s3Client from './r2Config.js';
-import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { publicUrl, r2KeyFromUrl, createWatermarkedCopy } from './watermark.js';
 
 const app = express();
 const port = 3000;
@@ -73,15 +74,6 @@ const requireAuth = async (req, res, next) => {
 
   req.user = user;
   next();
-};
-
-// R2 object key from its public URL (pathname minus leading slash)
-const r2KeyFromUrl = (url) => {
-  try {
-    return new URL(url).pathname.substring(1);
-  } catch {
-    return null;
-  }
 };
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -321,13 +313,25 @@ app.post('/api/galleries/:id/images', requireAuth, async (req, res) => {
   if (!match || match[1] !== galleryId) return res.status(400).json({ error: 'Invalid upload key.' });
 
   const supabase = getSupabaseClient(req);
-  if (!(await assertGalleryOwner(supabase, galleryId, req.user.id))) {
+  // Ownership check; also need the name for the watermark
+  const { data: gallery, error: galleryError } = await supabase
+    .from('galleries')
+    .select('owner_id, photographer_name')
+    .eq('id', galleryId)
+    .single();
+  if (galleryError || gallery.owner_id !== req.user.id) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
   const Bucket = process.env.R2_BUCKET_NAME;
+  // Every object this request has put in R2, removed again if the upload can't be completed
+  const written = [key];
+  const cleanUp = () =>
+    s3Client
+      .send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: written.map((Key) => ({ Key })) } }))
+      .catch((err) => console.error('Upload cleanup failed:', err));
   const rejectUpload = async (status, error) => {
-    await s3Client.send(new DeleteObjectCommand({ Bucket, Key: key })).catch(() => {});
+    await cleanUp();
     return res.status(status).json({ error });
   };
 
@@ -358,17 +362,23 @@ app.post('/api/galleries/:id/images', requireAuth, async (req, res) => {
       Body: previewBuffer,
       ContentType: 'image/jpeg',
     }));
+    written.push(previewKey);
 
-    // Public URLs via the configured R2 public domain
-    let baseUrl = process.env.R2_PUBLIC_URL.replace(/[\s\n\r]/g, '').replace(/\/$/, '');
-    if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`;
+    // Every photo gets its watermarked copy before its row exists, so preview mode never lacks one
+    const watermarkedUrl = await createWatermarkedCopy({
+      galleryId,
+      sourceKey: previewKey,
+      photographerName: gallery.photographer_name,
+    });
+    written.push(r2KeyFromUrl(watermarkedUrl));
 
     const { data: insertedImage, error: dbError } = await supabase
       .from('images')
       .insert([{
         gallery_id: galleryId,
-        image_url: `${baseUrl}/${key}`,
-        preview_url: `${baseUrl}/${previewKey}`,
+        image_url: publicUrl(key),
+        preview_url: publicUrl(previewKey),
+        watermarked_url: watermarkedUrl,
       }])
       .select()
       .single();
@@ -378,7 +388,7 @@ app.post('/api/galleries/:id/images', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Upload failed:', err);
     if (err.name === 'NoSuchKey') return res.status(400).json({ error: 'Upload not found in storage.' });
-    res.status(500).json({ error: 'Failed to process upload.' });
+    return rejectUpload(500, 'Failed to process upload.');
   }
 });
 
@@ -401,7 +411,8 @@ app.delete('/api/images/:id', requireAuth, async (req, res) => {
   }
 
   // Delete from R2
-  const objectsToDelete = [r2KeyFromUrl(image.image_url), r2KeyFromUrl(image.preview_url)]
+  const objectsToDelete = [image.image_url, image.preview_url, image.watermarked_url]
+    .map(r2KeyFromUrl)
     .filter(Boolean)
     .map(Key => ({ Key }));
 

@@ -1,6 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { v4 as uuidv4 } from 'uuid';
+import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import s3Client from './r2Config.js';
 
 // Bundled font: Vercel's servers have no system fonts, so text must not rely on them
 const FONT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'Inter-Medium.ttf');
@@ -68,4 +71,69 @@ export const renderWatermark = async (sourceBuffer, photographerName) => {
     .composite([{ input: overlay, blend: 'over' }])
     .jpeg({ quality: 82 })
     .toBuffer();
+};
+
+// Public URL for an R2 key, via the configured public bucket domain
+export const publicUrl = (key) => {
+  let base = process.env.R2_PUBLIC_URL.replace(/[\s\n\r]/g, '').replace(/\/$/, '');
+  if (!base.startsWith('http')) base = `https://${base}`;
+  return `${base}/${key}`;
+};
+
+// R2 object key from its public URL (pathname minus leading slash)
+export const r2KeyFromUrl = (url) => {
+  try {
+    return new URL(url).pathname.substring(1);
+  } catch {
+    return null;
+  }
+};
+
+// Reads sourceKey (the clean preview) from R2 and stores a watermarked copy under an unrelated random key
+export const createWatermarkedCopy = async ({ galleryId, sourceKey, photographerName }) => {
+  const Bucket = process.env.R2_BUCKET_NAME;
+  const source = await s3Client.send(new GetObjectCommand({ Bucket, Key: sourceKey }));
+  const body = await renderWatermark(Buffer.from(await source.Body.transformToByteArray()), photographerName);
+  const key = `${galleryId}/w/${uuidv4()}.jpg`;
+  await s3Client.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: 'image/jpeg' }));
+  return publicUrl(key);
+};
+
+// Creates missing watermarked copies for a gallery, or new copies for every photo when regenerate is set
+// (e.g. after a name change). Order per photo: write new copy, point the row at it, then delete the old copy.
+export const ensureWatermarks = async (supabase, gallery, { regenerate = false } = {}) => {
+  const { data: images, error } = await supabase
+    .from('images')
+    .select('id, image_url, preview_url, watermarked_url')
+    .eq('gallery_id', gallery.id);
+  if (error) throw error;
+
+  let created = 0;
+  // ponytail: one photo at a time (~0.3s each) fits Vercel's 300s limit up to a few hundred photos; use a queue beyond that
+  for (const image of images) {
+    if (!regenerate && image.watermarked_url) continue;
+
+    const watermarkedUrl = await createWatermarkedCopy({
+      galleryId: gallery.id,
+      sourceKey: r2KeyFromUrl(image.preview_url || image.image_url),
+      photographerName: gallery.photographer_name,
+    });
+
+    const { data: updated, error: updateError } = await supabase
+      .from('images')
+      .update({ watermarked_url: watermarkedUrl })
+      .eq('id', image.id)
+      .select('id');
+    if (updateError) throw updateError;
+    if (!updated?.length) throw new Error(`Could not save watermark for image ${image.id} (check images UPDATE policy)`);
+    created++;
+
+    const oldKey = image.watermarked_url && r2KeyFromUrl(image.watermarked_url);
+    if (oldKey) {
+      await s3Client
+        .send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: oldKey }))
+        .catch((err) => console.error(`Failed to delete old watermark ${oldKey}:`, err));
+    }
+  }
+  return created;
 };
