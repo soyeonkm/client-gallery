@@ -1,7 +1,7 @@
 // Plain assert checks for the watermark module. Run: node server/watermark.test.js
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { watermarkText, renderWatermark } from './watermark.js';
+import { watermarkSegments, renderWatermark } from './watermark.js';
 
 const grey = (width, height) =>
   sharp({ create: { width, height, channels: 3, background: { r: 90, g: 90, b: 90 } } }).jpeg().toBuffer();
@@ -12,11 +12,13 @@ const meanBrightness = async (buf) => {
 };
 
 const tests = {
-  'watermarkText escapes Pango markup in brand and name': () => {
-    const text = watermarkText('Tom & Jerry <Studio>');
-    assert.ok(text.includes('Tom &amp; Jerry &lt;Studio&gt;'), text);
-    assert.ok(text.includes('Bean &amp; Grain'), text);
-    assert.ok(text.includes('Photography by'), text);
+  'watermark text matches the wordmark: semibold words, italic ampersand, escaped name': () => {
+    const segments = watermarkSegments('Tom & Jerry <Studio>');
+    assert.deepEqual(segments.map((s) => s.face), ['semibold', 'italic', 'semibold']);
+    assert.equal(segments[0].text, 'Bean');
+    assert.equal(segments[1].text, '&amp;');
+    assert.ok(segments[2].text.startsWith('Grain'), segments[2].text);
+    assert.ok(segments[2].text.includes('Photography by Tom &amp; Jerry &lt;Studio&gt;'), segments[2].text);
   },
 
   'large image is resized to a 1200px long edge JPEG': async () => {
@@ -39,11 +41,20 @@ const tests = {
     assert.ok(after > before + 3.5, `watermark not prominent enough: ${before.toFixed(1)} -> ${after.toFixed(1)}`);
   },
 
-  'watermark uses the bundled Cormorant Garamond Bold font (title serif)': async () => {
-    const { WATERMARK_FONT_FILE } = await import('./watermark.js');
+  'watermark uses the wordmark fonts: Cormorant Garamond SemiBold + Medium Italic': async () => {
+    const { WATERMARK_FONTS } = await import('./watermark.js');
     const { existsSync } = await import('node:fs');
-    assert.match(WATERMARK_FONT_FILE, /CormorantGaramond-Bold\.ttf$/);
-    assert.ok(existsSync(WATERMARK_FONT_FILE), `missing ${WATERMARK_FONT_FILE}`);
+    assert.match(WATERMARK_FONTS.semibold.file, /CormorantGaramond-SemiBold\.ttf$/);
+    assert.match(WATERMARK_FONTS.italic.file, /CormorantGaramond-MediumItalic\.ttf$/);
+    for (const { file } of Object.values(WATERMARK_FONTS)) assert.ok(existsSync(file), `missing ${file}`);
+  },
+
+  'bundled Cormorant Garamond actually renders (not a fallback font)': async () => {
+    const { WATERMARK_FONTS } = await import('./watermark.js');
+    const { font, file } = WATERMARK_FONTS.semibold;
+    const { width } = await sharp({ text: { text: 'Bean Grain Photography', font: `${font} 40`, fontfile: file, dpi: 72 } }).metadata();
+    // Cormorant Garamond SemiBold sets this string at ~387px; fallback sans fonts come out at 435-464px
+    assert.ok(Math.abs(width - 387) <= 12, `rendered ${width}px, expected ~387px: bundled font not used`);
   },
 
   'tiny image still gets watermarked at its own size': async () => {

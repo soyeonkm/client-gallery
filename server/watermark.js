@@ -1,3 +1,4 @@
+import './fontconfig.js'; // first: before sharp renders any text
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
@@ -6,17 +7,57 @@ import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sd
 import s3Client from './r2Config.js';
 
 // Bundled font: Vercel's servers have no system fonts, so text must not rely on them
-export const WATERMARK_FONT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'CormorantGaramond-Bold.ttf');
+// Same faces as the Bean & Grain wordmark: SemiBold words, Medium Italic ampersand
+const FONT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts');
+export const WATERMARK_FONTS = {
+  semibold: { file: path.join(FONT_DIR, 'CormorantGaramond-SemiBold.ttf'), font: 'Cormorant Garamond SemiBold' },
+  italic: { file: path.join(FONT_DIR, 'CormorantGaramond-MediumItalic.ttf'), font: 'Cormorant Garamond Medium Italic' },
+};
 
 const MAX_EDGE = 1200;
-const OPACITY = 0.5;
+const OPACITY = 0.6;
 const ANGLE = -30;
 
 // Pango markup: brand and names must be escaped (e.g. "&" breaks the renderer otherwise)
 const escapeMarkup = (s) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
-export const watermarkText = (name) => `${escapeMarkup('Bean & Grain')}  ·  Photography by ${escapeMarkup(name)}`;
+// sharp loads one font file per text render, so the phrase is rendered as pieces and joined
+export const watermarkSegments = (name) => [
+  { face: 'semibold', text: 'Bean' },
+  { face: 'italic', text: escapeMarkup('&') },
+  { face: 'semibold', text: `Grain  ·  Photography by ${escapeMarkup(name)}` },
+];
+
+// Renders the phrase as one transparent image: pieces side by side, separated by a word space
+const renderPhrase = async (name, fontSize) => {
+  const pieces = await Promise.all(
+    watermarkSegments(name).map(({ face, text }) =>
+      sharp({
+        text: {
+          text: `<span foreground="white">${text}</span>`,
+          font: `${WATERMARK_FONTS[face].font} ${fontSize}`,
+          fontfile: WATERMARK_FONTS[face].file,
+          dpi: 72,
+          rgba: true,
+        },
+      }).png().toBuffer({ resolveWithObject: true })
+    )
+  );
+  const gap = Math.round(fontSize * 0.28);
+  const width = pieces.reduce((sum, p) => sum + p.info.width, 0) + gap * (pieces.length - 1);
+  const height = Math.max(...pieces.map((p) => p.info.height));
+  let left = 0;
+  const layers = pieces.map((p) => {
+    const layer = { input: p.data, left, top: 0 };
+    left += p.info.width + gap;
+    return layer;
+  });
+  return sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(layers)
+    .png()
+    .toBuffer();
+};
 
 // Two-row repeat unit: the second row is the first shifted right by half its width (wrapping),
 // so rows of text are staggered like brickwork instead of lining up in columns
@@ -41,20 +82,12 @@ export const staggerRows = async (cell) => {
 // rotated as a whole and cropped to the photo, so the diagonal rows are dense and uniform
 const renderOverlay = async (width, height, name) => {
   const longEdge = Math.max(width, height);
-  const fontSize = Math.max(10, Math.round(longEdge * 0.034));
-  const text = await sharp({
-    text: {
-      text: `<span foreground="white">${watermarkText(name)}</span>`,
-      font: `Cormorant Garamond Bold ${fontSize}`,
-      fontfile: WATERMARK_FONT_FILE,
-      dpi: 72,
-      rgba: true,
-    },
-  }).png().toBuffer();
+  const fontSize = Math.max(10, Math.round(longEdge * 0.04));
+  const text = await renderPhrase(name, fontSize);
 
   const transparent = { r: 0, g: 0, b: 0, alpha: 0 };
   const padded = await sharp(text)
-    .extend({ top: fontSize * 2, bottom: fontSize * 2, left: fontSize * 2, right: fontSize * 2, background: transparent })
+    .extend({ top: Math.round(fontSize * 1.1), bottom: Math.round(fontSize * 1.1), left: Math.round(fontSize * 1.5), right: Math.round(fontSize * 1.5), background: transparent })
     .png()
     .toBuffer();
   const cell = await staggerRows(padded);
