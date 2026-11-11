@@ -52,7 +52,7 @@ const Dashboard = () => {
       setIsModalOpen(false);
     } catch (err) {
       console.error('Error creating gallery:', err);
-      setCreateError('The gallery couldn’t be created. Please try again.');
+      setCreateError(err.message || 'The gallery couldn’t be created. Please try again.');
     }
   };
 
